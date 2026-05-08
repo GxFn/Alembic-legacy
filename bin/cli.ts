@@ -8,6 +8,8 @@
  *   alembic codex init      - Codex 插件模式初始化（默认 Ghost）
  *   alembic codex diagnostics - Codex 插件运行时诊断
  *   alembic codex status    - Codex 插件模式状态检查
+ *   alembic ai status       - 查看 AI 配置
+ *   alembic ai configure    - 写入工作区 AI 配置
  *   alembic daemon start    - 启动 Alembic daemon（动态端口 + state 文件）
  *   alembic remote <url>    - 将 recipes 目录转为独立子仓库并关联远程仓库
  *   alembic coldstart       - 冷启动知识库（9 维度分析 + AI 填充）
@@ -41,6 +43,14 @@ import { getCursorRoot, getCursorRulesDir, getCursorSkillsDir } from '../lib/sha
 import { DASHBOARD_DIR, PACKAGE_ROOT } from '../lib/shared/package-root.js';
 import { shutdown } from '../lib/shared/shutdown.js';
 import { WorkspaceResolver } from '../lib/shared/WorkspaceResolver.js';
+import {
+  collectAiEnv,
+  collectAiEnvOverrides,
+  isAiEnvReady,
+  maskAiEnvConfig,
+  PROVIDER_KEY_ENV,
+  WorkspaceSettingsStore,
+} from '../lib/shared/WorkspaceSettingsStore.js';
 
 const pkgPath = join(PACKAGE_ROOT, 'package.json');
 const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : { version: '2.0.0' };
@@ -181,6 +191,85 @@ codex
       return;
     }
     printCodexStatus(status);
+  });
+
+// ─────────────────────────────────────────────────────
+// ai 命令 — 工作区 AI 配置
+// ─────────────────────────────────────────────────────
+const ai = program.command('ai').description('管理 Alembic 工作区 AI 配置');
+
+ai.command('status')
+  .description('查看有效 AI 配置来源和状态')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const status = buildAiConfigStatus(resolve(opts.dir));
+    if (opts.json) {
+      cli.json(status);
+      return;
+    }
+    printAiConfigStatus(status);
+  });
+
+ai.command('configure')
+  .description('写入 Alembic 工作区 AI 配置（settings/secrets）')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--provider <provider>', 'AI provider: google/openai/claude/deepseek/ollama')
+  .option('--model <model>', '主模型名称')
+  .option('--key <apiKey>', '当前 provider 的 API Key（更推荐 --key-stdin）')
+  .option('--key-stdin', '从 stdin 读取当前 provider 的 API Key')
+  .option('--google-key <apiKey>', 'Google API Key')
+  .option('--openai-key <apiKey>', 'OpenAI API Key')
+  .option('--claude-key <apiKey>', 'Claude API Key')
+  .option('--deepseek-key <apiKey>', 'DeepSeek API Key')
+  .option('--proxy <url>', 'AI HTTP/HTTPS 代理')
+  .option('--reasoning-effort <level>', '推理深度，如 low/medium/high')
+  .option('--embed-provider <provider>', 'Embedding provider')
+  .option('--embed-model <model>', 'Embedding model')
+  .option('--embed-base-url <url>', 'Embedding base URL')
+  .option('--embed-key <apiKey>', 'Embedding API Key')
+  .option('--embed-key-stdin', '从 stdin 读取 Embedding API Key')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const projectRoot = resolve(opts.dir);
+    const updates = await buildAiConfigUpdates(opts);
+    if (Object.keys(updates).length === 0) {
+      cli.error('No AI config fields provided. Run `alembic ai configure --help`.');
+      process.exit(1);
+    }
+
+    const store = WorkspaceSettingsStore.fromProject(projectRoot);
+    store.writeAiConfig(updates);
+    const status = buildAiConfigStatus(projectRoot);
+    if (opts.json) {
+      cli.json(status);
+      return;
+    }
+    cli.success('AI configuration saved to Alembic workspace settings.');
+    printAiConfigStatus(status);
+  });
+
+ai.command('import-env')
+  .description('把当前 shell 中显式设置的 Alembic AI 环境变量导入工作区配置')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const projectRoot = resolve(opts.dir);
+    const updates = collectAiEnv(process.env);
+    if (Object.keys(updates).length === 0) {
+      cli.error('No Alembic AI environment variables found in the current process.');
+      process.exit(1);
+    }
+
+    const store = WorkspaceSettingsStore.fromProject(projectRoot);
+    store.writeAiConfig(updates);
+    const status = buildAiConfigStatus(projectRoot);
+    if (opts.json) {
+      cli.json(status);
+      return;
+    }
+    cli.success('Imported current process AI environment into Alembic workspace settings.');
+    printAiConfigStatus(status);
   });
 
 // ─────────────────────────────────────────────────────
@@ -2183,6 +2272,166 @@ async function initContainer(opts: any = {}) {
   return { bootstrap, container };
 }
 
+interface AiConfigureOptions {
+  provider?: string;
+  model?: string;
+  key?: string;
+  keyStdin?: boolean;
+  googleKey?: string;
+  openaiKey?: string;
+  claudeKey?: string;
+  deepseekKey?: string;
+  proxy?: string;
+  reasoningEffort?: string;
+  embedProvider?: string;
+  embedModel?: string;
+  embedBaseUrl?: string;
+  embedKey?: string;
+  embedKeyStdin?: boolean;
+}
+
+function buildAiConfigStatus(projectRoot: string) {
+  const store = WorkspaceSettingsStore.fromProject(projectRoot);
+  const workspaceConfig = store.readAiConfig();
+  const processConfig = collectAiEnvOverrides(workspaceConfig.env, process.env);
+  const effectiveEnv = {
+    ...workspaceConfig.env,
+    ...processConfig,
+  };
+  const hasWorkspaceConfig = workspaceConfig.hasSettingsFile || workspaceConfig.hasSecretsFile;
+  const hasProcessConfig = Object.keys(processConfig).length > 0;
+
+  return {
+    ok: isAiEnvReady(effectiveEnv),
+    projectRoot,
+    source: hasProcessConfig ? 'process-env' : hasWorkspaceConfig ? 'workspace-settings' : 'empty',
+    provider: effectiveEnv.ALEMBIC_AI_PROVIDER || null,
+    model: effectiveEnv.ALEMBIC_AI_MODEL || null,
+    embedProvider: effectiveEnv.ALEMBIC_EMBED_PROVIDER || null,
+    embedModel: effectiveEnv.ALEMBIC_EMBED_MODEL || null,
+    vars: maskAiEnvConfig(effectiveEnv),
+    explicitEnvKeys: Object.keys(processConfig).sort(),
+    workspace: {
+      settingsPath: workspaceConfig.settingsPath,
+      settingsExists: workspaceConfig.hasSettingsFile,
+      secretsPath: workspaceConfig.secretsPath,
+      secretsExists: workspaceConfig.hasSecretsFile,
+    },
+  };
+}
+
+async function buildAiConfigUpdates(opts: AiConfigureOptions): Promise<Record<string, string>> {
+  const updates: Record<string, string> = {};
+  const provider = normalizeOptionalString(opts.provider);
+  assignOptionalAiValue(updates, 'ALEMBIC_AI_PROVIDER', provider);
+  assignOptionalAiValue(updates, 'ALEMBIC_AI_MODEL', opts.model);
+  assignOptionalAiValue(updates, 'ALEMBIC_AI_PROXY', opts.proxy);
+  assignOptionalAiValue(updates, 'ALEMBIC_AI_REASONING_EFFORT', opts.reasoningEffort);
+  assignOptionalAiValue(updates, 'ALEMBIC_EMBED_PROVIDER', opts.embedProvider);
+  assignOptionalAiValue(updates, 'ALEMBIC_EMBED_MODEL', opts.embedModel);
+  assignOptionalAiValue(updates, 'ALEMBIC_EMBED_BASE_URL', opts.embedBaseUrl);
+  assignOptionalAiValue(updates, 'ALEMBIC_GOOGLE_API_KEY', opts.googleKey);
+  assignOptionalAiValue(updates, 'ALEMBIC_OPENAI_API_KEY', opts.openaiKey);
+  assignOptionalAiValue(updates, 'ALEMBIC_CLAUDE_API_KEY', opts.claudeKey);
+  assignOptionalAiValue(updates, 'ALEMBIC_DEEPSEEK_API_KEY', opts.deepseekKey);
+
+  const activeKey = await resolveSecretOption(opts.key, opts.keyStdin);
+  if (activeKey) {
+    if (!provider) {
+      cli.error('--key/--key-stdin requires --provider.');
+      process.exit(1);
+    }
+    const keyEnv = PROVIDER_KEY_ENV[provider];
+    if (!keyEnv) {
+      cli.error(`Provider "${provider}" does not use an API key managed by Alembic.`);
+      process.exit(1);
+    }
+    updates[keyEnv] = activeKey;
+  }
+
+  const embedKey = await resolveSecretOption(opts.embedKey, opts.embedKeyStdin);
+  if (embedKey) {
+    updates.ALEMBIC_EMBED_API_KEY = embedKey;
+  }
+
+  return updates;
+}
+
+function printAiConfigStatus(status: ReturnType<typeof buildAiConfigStatus>) {
+  cli.log('');
+  cli.log('  Alembic AI Configuration');
+  cli.log(`  ${'─'.repeat(40)}`);
+  cli.log(`  Ready:       ${status.ok ? 'yes' : 'no'}`);
+  cli.log(`  Source:      ${formatAiConfigSource(status.source)}`);
+  cli.log(`  Provider:    ${status.provider || 'not configured'}`);
+  if (status.model) {
+    cli.log(`  Model:       ${status.model}`);
+  }
+  if (status.embedProvider || status.embedModel) {
+    cli.log(
+      `  Embedding:   ${[status.embedProvider, status.embedModel].filter(Boolean).join(' / ')}`
+    );
+  }
+  cli.log(
+    `  Settings:    ${status.workspace.settingsExists ? status.workspace.settingsPath : 'missing'}`
+  );
+  cli.log(
+    `  Secrets:     ${status.workspace.secretsExists ? status.workspace.secretsPath : 'missing'}`
+  );
+  if (status.explicitEnvKeys.length > 0) {
+    cli.log(`  Env override: ${status.explicitEnvKeys.join(', ')}`);
+  }
+  cli.blank();
+}
+
+function formatAiConfigSource(source: string) {
+  if (source === 'process-env') {
+    return 'explicit process environment';
+  }
+  if (source === 'workspace-settings') {
+    return 'Alembic workspace settings';
+  }
+  return 'not configured';
+}
+
+function assignOptionalAiValue(updates: Record<string, string>, key: string, value?: string) {
+  const normalized = normalizeOptionalString(value);
+  if (normalized) {
+    updates[key] = normalized;
+  }
+}
+
+function normalizeOptionalString(value?: string) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || undefined;
+}
+
+async function resolveSecretOption(value?: string, readFromStdin?: boolean) {
+  const inline = normalizeOptionalString(value);
+  if (inline) {
+    return inline;
+  }
+  if (!readFromStdin) {
+    return undefined;
+  }
+  if (process.stdin.isTTY) {
+    cli.error(
+      'stdin is empty. Pipe the secret, e.g. `printf %s "$KEY" | alembic ai configure --provider openai --key-stdin`.'
+    );
+    process.exit(1);
+  }
+  return normalizeOptionalString(await readAllStdin());
+}
+
+async function readAllStdin() {
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) {
+    data += chunk;
+  }
+  return data;
+}
+
 async function buildCodexStatus(projectRootInput: string) {
   const projectRoot = resolve(projectRootInput);
   const resolver = WorkspaceResolver.fromProject(projectRoot);
@@ -2190,7 +2439,7 @@ async function buildCodexStatus(projectRootInput: string) {
 
   const configPath = resolver.configPath;
   const databasePath = resolver.databasePath;
-  const envPath = join(resolver.dataRoot, '.env');
+  const settingsStore = new WorkspaceSettingsStore(resolver);
   const daemonStatePath = join(resolver.runtimeDir, 'daemon.json');
   const daemonPidPath = join(resolver.runtimeDir, 'daemon.pid');
   const { DaemonSupervisor } = await import('../lib/daemon/DaemonSupervisor.js');
@@ -2201,7 +2450,8 @@ async function buildCodexStatus(projectRootInput: string) {
   const databaseExists = existsSync(databasePath);
   const knowledgeExists = existsSync(resolver.knowledgeDir);
   const recipesExists = existsSync(resolver.recipesDir);
-  const envExists = existsSync(envPath);
+  const settingsExists = existsSync(settingsStore.settingsPath);
+  const secretsExists = existsSync(settingsStore.secretsPath);
   const daemonState = daemonStatus.state || readJsonIfExists(daemonStatePath);
 
   const projectArtifacts = {
@@ -2209,8 +2459,6 @@ async function buildCodexStatus(projectRootInput: string) {
     runtimeExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.project.runtime)),
     knowledgeDir: join(projectRoot, DEFAULT_FOLDER_NAMES.project.knowledgeBase),
     knowledgeExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.project.knowledgeBase)),
-    envPath: join(projectRoot, '.env'),
-    envExists: existsSync(join(projectRoot, '.env')),
     cursorDir: join(projectRoot, DEFAULT_FOLDER_NAMES.ide.cursorRoot),
     cursorDirExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.ide.cursorRoot)),
     vscodeMcpPath: join(projectRoot, '.vscode', 'mcp.json'),
@@ -2249,8 +2497,10 @@ async function buildCodexStatus(projectRootInput: string) {
       configExists,
       databasePath,
       databaseExists,
-      envPath,
-      envExists,
+      settingsPath: settingsStore.settingsPath,
+      settingsExists,
+      secretsPath: settingsStore.secretsPath,
+      secretsExists,
       knowledgeDir: resolver.knowledgeDir,
       knowledgeExists,
       recipesDir: resolver.recipesDir,
@@ -2381,7 +2631,6 @@ function printCodexStatus(status: Awaited<ReturnType<typeof buildCodexStatus>>) 
     const polluted =
       artifacts.runtimeExists ||
       artifacts.knowledgeExists ||
-      artifacts.envExists ||
       artifacts.cursorDirExists ||
       artifacts.vscodeMcpExists;
     cli.log(`  Project IO:  ${polluted ? 'project artifacts detected' : 'zero project artifacts'}`);

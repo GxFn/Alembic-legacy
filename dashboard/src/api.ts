@@ -1657,16 +1657,20 @@ Skill 文档格式要求：
     return res.data?.data || { reply: '' };
   },
 
-  // ── LLM .env 配置 ──────────────────────────────────
+  // ── LLM workspace settings ─────────────────────────
 
-  /** 读取用户项目 .env 中的 LLM 配置 */
+  /** 读取 Alembic 工作区中的 LLM 配置 */
   async getLlmEnvConfig(): Promise<{
     vars: Record<string, string>;
-    hasEnvFile: boolean;
+    hasSettingsFile?: boolean;
+    hasSecretsFile?: boolean;
+    settingsPath?: string;
+    secretsPath?: string;
+    configSource?: 'workspace-settings' | 'process-env' | 'empty';
     llmReady: boolean;
   }> {
     const res = await http.get('/ai/env-config');
-    return res.data?.data || { vars: {}, hasEnvFile: false, llmReady: false };
+    return res.data?.data || { vars: {}, llmReady: false };
   },
 
   /** 近 7 日 Token 消耗报告 */
@@ -1679,7 +1683,7 @@ Skill 文档格式要求：
     return res.data?.data || { daily: [], bySource: [], summary: { input_tokens: 0, output_tokens: 0, total_tokens: 0, call_count: 0, avg_per_call: 0 } };
   },
 
-  /** 写入 / 更新用户项目 .env 中的 LLM 配置 */
+  /** 写入 / 更新 Alembic 工作区中的 LLM 配置 */
   async saveLlmEnvConfig(config: {
     provider: string;
     model?: string;
@@ -1693,11 +1697,15 @@ Skill 文档格式要求：
     providerKeys?: Record<string, string>;
   }): Promise<{
     vars: Record<string, string>;
-    hasEnvFile: boolean;
+    hasSettingsFile?: boolean;
+    hasSecretsFile?: boolean;
+    settingsPath?: string;
+    secretsPath?: string;
+    configSource?: 'workspace-settings' | 'process-env' | 'empty';
     llmReady: boolean;
   }> {
     const res = await http.post('/ai/env-config', config);
-    return res.data?.data || { vars: {}, hasEnvFile: false, llmReady: false };
+    return res.data?.data || { vars: {}, llmReady: false };
   },
 
   // ═══════════════════════════════════════════════════════

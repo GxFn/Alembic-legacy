@@ -424,7 +424,7 @@ export class DeepSeekProvider extends AiProvider {
   ): Promise<ApiResponse> {
     if (!this.apiKey) {
       const err = new Error(
-        'DeepSeek API Key 未配置。请在 .env 中设置 ALEMBIC_DEEPSEEK_API_KEY，或运行 alembic setup 完成配置。'
+        'DeepSeek API Key 未配置。请在 Alembic Dashboard 的 AI Settings 中设置 API Key。'
       ) as Error & { code: string };
       err.code = 'API_KEY_MISSING';
       throw err;

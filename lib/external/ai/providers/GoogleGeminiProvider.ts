@@ -470,7 +470,7 @@ export class GoogleGeminiProvider extends AiProvider {
   ): Promise<ApiResponse> {
     if (!this.apiKey) {
       const err = new Error(
-        'Google Gemini API Key 未配置。请在 .env 中设置 ALEMBIC_GOOGLE_API_KEY，或运行 alembic setup 完成配置。'
+        'Google Gemini API Key 未配置。请在 Alembic Dashboard 的 AI Settings 中设置 API Key。'
       );
       (err as Error & { code: string }).code = 'API_KEY_MISSING';
       throw err;

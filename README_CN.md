@@ -209,6 +209,24 @@ alembic guard:ci --min-score 90   # CI 质量门禁
 
 > AI 驱动功能需 LLM API Key。支持 Google / OpenAI / Claude / DeepSeek / Ollama，自动 fallback。
 
+AI 配置可以通过这些方式完成：
+
+```bash
+# Dashboard
+alembic ui
+
+# CLI：把 provider/model 和 Key 写入工作区 settings/secrets
+printf %s "$OPENAI_API_KEY" | alembic ai configure --provider openai --model gpt-5.5 --key-stdin
+
+# CLI：把当前 shell 中显式导出的 ALEMBIC_* 变量持久化到工作区 settings/secrets
+ALEMBIC_AI_PROVIDER=google ALEMBIC_GOOGLE_API_KEY=... alembic ai import-env
+
+# 查看当前有效配置
+alembic ai status
+```
+
+显式进程环境变量仍可用于一次性运行，并且会覆盖工作区配置，但不会被自动持久化。
+
 ---
 
 ## 项目结构
@@ -298,14 +316,13 @@ brew install ollama && ollama serve
 ollama pull qwen3-embedding:0.6b
 ```
 
-然后在项目的 `.env` 中配置：
+然后在 Dashboard（`alembic ui`）→ 设置 → Embedding 模型中配置，或使用 CLI：
 
 ```bash
-ALEMBIC_EMBED_PROVIDER=ollama
-ALEMBIC_EMBED_MODEL=qwen3-embedding:0.6b
+alembic ai configure --embed-provider ollama --embed-model qwen3-embedding:0.6b
 ```
 
-也可以在 Dashboard（`alembic ui`）→ 设置 → Embedding 模型中配置。
+Alembic 会把配置写入项目工作区 settings；Ghost 模式下位于仓库外部。
 
 配置完成后运行 `alembic embed` 构建向量索引。语义搜索每次查询约增加 200–400ms 延迟（本地推理，无需 API 调用，数据不出本机）。
 

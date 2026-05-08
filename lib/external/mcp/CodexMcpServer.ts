@@ -15,6 +15,7 @@ import { JobStore } from '../../daemon/JobStore.js';
 import { DEFAULT_FOLDER_NAMES } from '../../shared/folder-names.js';
 import { PACKAGE_ROOT } from '../../shared/package-root.js';
 import { WorkspaceResolver } from '../../shared/WorkspaceResolver.js';
+import { WorkspaceSettingsStore } from '../../shared/WorkspaceSettingsStore.js';
 import { TIER_ORDER, TOOLS, withMcpToolAnnotations } from './tools.js';
 
 interface CodexMcpServerOptions {
@@ -304,6 +305,7 @@ export class CodexMcpServer {
 
   async buildStatus(): Promise<Record<string, unknown>> {
     const resolver = WorkspaceResolver.fromProject(this.projectRoot);
+    const settingsStore = new WorkspaceSettingsStore(resolver);
     const facts = resolver.toFacts();
     const daemonStatus = await this.supervisor.status(this.projectRoot);
     const knowledge = inspectCodexKnowledge(this.projectRoot);
@@ -338,6 +340,10 @@ export class CodexMcpServer {
           candidatesDir: resolver.candidatesDir,
           skillsDir: resolver.skillsDir,
           wikiDir: resolver.wikiDir,
+          settingsPath: settingsStore.settingsPath,
+          settingsExists: existsSync(settingsStore.settingsPath),
+          secretsPath: settingsStore.secretsPath,
+          secretsExists: existsSync(settingsStore.secretsPath),
         },
         knowledge,
         projectArtifacts: {
@@ -345,7 +351,6 @@ export class CodexMcpServer {
           knowledgeExists: existsSync(
             join(this.projectRoot, DEFAULT_FOLDER_NAMES.project.knowledgeBase)
           ),
-          envExists: existsSync(join(this.projectRoot, '.env')),
           cursorDirExists: existsSync(join(this.projectRoot, DEFAULT_FOLDER_NAMES.ide.cursorRoot)),
           vscodeMcpExists: existsSync(join(this.projectRoot, '.vscode', 'mcp.json')),
         },

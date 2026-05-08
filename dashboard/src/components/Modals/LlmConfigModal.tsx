@@ -55,7 +55,7 @@ const LlmConfigModal: React.FC<LlmConfigModalProps> = ({ onClose, onSaved }) => 
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [hasEnvFile, setHasEnvFile] = useState(false);
+  const [hasWorkspaceConfig, setHasWorkspaceConfig] = useState(false);
   const [provider, setProvider] = useState('google');
   const [model, setModel] = useState('');
   const [proxy, setProxy] = useState('');
@@ -83,7 +83,7 @@ const LlmConfigModal: React.FC<LlmConfigModalProps> = ({ onClose, onSaved }) => 
       const filtered = providerList.filter(p => p.id !== 'mock');
       if (filtered.length > 0) setProviders(filtered);
 
-      setHasEnvFile(data.hasEnvFile);
+      setHasWorkspaceConfig(Boolean(data.hasSettingsFile || data.hasSecretsFile));
       const vars = data.vars || {};
       const currentProvider = vars.ALEMBIC_AI_PROVIDER || 'google';
       setProvider(currentProvider);
@@ -479,7 +479,7 @@ const LlmConfigModal: React.FC<LlmConfigModalProps> = ({ onClose, onSaved }) => 
 
               {/* Right: Provider Detail Panel */}
               <div className="flex-1 p-5 overflow-y-auto space-y-5">
-                {!hasEnvFile && (
+                {!hasWorkspaceConfig && (
                   <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
                     <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                     <span>{t('llmConfig.envWarning')}</span>

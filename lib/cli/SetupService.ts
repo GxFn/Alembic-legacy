@@ -3,7 +3,7 @@
  *
  * 一键初始化 Alembic V2 工作空间，5 步完成：
  *
- *   Step 1  .asd/ 运行时目录 + config.json + .gitignore
+ *   Step 1  .asd/ 运行时目录 + config.json
  *   Step 2  Alembic/ 知识库目录结构 + Alembic/recipes/（有 --repo 则 clone，无则为普通目录）
  *   Step 3  IDE 集成（VSCode MCP + Cursor MCP + copilot-instructions + cursor-rules
  *           + skills-template + cursor-workflow + claude-hooks + guard-ci + pre-commit-hook）
@@ -294,9 +294,6 @@ export class SetupService {
       };
       writeFileSync(configPath, JSON.stringify(config, null, 2));
     }
-
-    // .env — AI 配置模板
-    this._ensureEnvFile();
 
     return { created: 'runtime' };
   }
@@ -702,39 +699,6 @@ export class SetupService {
   }
 
   /* ═══ Helpers ════════════════════════════════════════ */
-
-  /**
-   * 创建 .env 文件（从 .env.example 复制）。
-   * Ghost 模式下写入外置 dataRoot，避免污染用户项目根。
-   * 如果 .env 已存在则跳过并提示用户手动配置。
-   */
-  private _ensureEnvFile() {
-    const envDir = this.ghost ? (this.resolver?.dataRoot ?? this.projectRoot) : this.projectRoot;
-    mkdirSync(envDir, { recursive: true });
-    const envPath = join(envDir, '.env');
-    if (existsSync(envPath)) {
-      return;
-    }
-
-    const examplePath = join(REPO_ROOT, '.env.example');
-    if (existsSync(examplePath)) {
-      copyFileSync(examplePath, envPath);
-    } else {
-      // fallback: .env.example 缺失时写入最小模板
-      writeFileSync(
-        envPath,
-        [
-          '# Alembic AI 配置（由 alembic setup 自动生成）',
-          '# 完整配置说明见 .env.example',
-          '',
-          'ALEMBIC_AI_PROVIDER=google',
-          'ALEMBIC_AI_MODEL=gemini-3-flash-preview',
-          '# ALEMBIC_GOOGLE_API_KEY=',
-          '',
-        ].join('\n')
-      );
-    }
-  }
 
   /** 在指定目录执行 git 命令 */
   private _git(args: string[], cwd: string) {

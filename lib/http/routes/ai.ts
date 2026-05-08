@@ -1,10 +1,8 @@
 /**
  * AI API 路由
- * AI 提供商管理、摘要、翻译、对话、.env LLM 配置
+ * AI 提供商管理、摘要、翻译、对话、工作区 LLM 配置
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import express, { type Request, type Response } from 'express';
 import {
   type AgentRunInput,
@@ -44,6 +42,13 @@ import {
   AiToolBody,
   AiTranslateBody,
 } from '../../shared/schemas/http-requests.js';
+import {
+  collectAiEnvOverrides,
+  isAiEnvReady,
+  maskAiEnvConfig,
+  PROVIDER_KEY_ENV,
+  WorkspaceSettingsStore,
+} from '../../shared/WorkspaceSettingsStore.js';
 import { validate } from '../middleware/validate.js';
 import { createStreamSession, getStreamSession } from '../utils/sse-sessions.js';
 import { sendToolEnvelopeResponse } from '../utils/tool-envelope-response.js';
@@ -55,14 +60,6 @@ export {
 
 const router = express.Router();
 const logger = Logger.getInstance();
-
-const SECRET_ENV_KEYS = new Set([
-  'ALEMBIC_GOOGLE_API_KEY',
-  'ALEMBIC_OPENAI_API_KEY',
-  'ALEMBIC_CLAUDE_API_KEY',
-  'ALEMBIC_DEEPSEEK_API_KEY',
-  'ALEMBIC_EMBED_API_KEY',
-]);
 
 const AI_CONFIG_GATEWAY_ACTION = 'update:config';
 const AI_CONFIG_GATEWAY_RESOURCE = 'ai_config';
@@ -146,7 +143,9 @@ function requireAiReady() {
   const container = getContainer();
   const manager = container.singletons?._aiProviderManager as { isMock: boolean } | undefined;
   if (manager?.isMock) {
-    throw new ValidationError('AI Provider 未配置，当前为 Mock 模式。请先在 .env 中配置 API Key。');
+    throw new ValidationError(
+      'AI Provider 未配置，当前为 Mock 模式。请先在 Alembic Dashboard 的 AI Settings 中配置 API Key。'
+    );
   }
   return container;
 }
@@ -234,16 +233,6 @@ export async function ensureDirectToolAllowed(
     },
   });
   return false;
-}
-
-function maskSecret(value: string) {
-  if (!value) {
-    return '';
-  }
-  if (value.length <= 8) {
-    return '********';
-  }
-  return `${value.slice(0, 2)}...${value.slice(-4)}`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -872,99 +861,48 @@ router.post(
 );
 
 // ═══════════════════════════════════════════════════════
-//  .env LLM 配置读写
+//  工作区 LLM 配置读写
 // ═══════════════════════════════════════════════════════
 
-/** 获取用户项目目录下 .env 的路径 */
-function _getProjectEnvPath() {
+function getWorkspaceSettingsStore() {
   const container = getServiceContainer();
-  const projectRoot =
-    (container.singletons?._projectRoot as string | undefined) ||
-    process.env.ALEMBIC_PROJECT_DIR ||
-    process.cwd();
-  return join(projectRoot, '.env');
+  return WorkspaceSettingsStore.fromProject(resolveProjectRoot(container));
 }
 
-/** LLM 相关的 env 变量名 → 标签映射 */
-const LLM_ENV_KEYS = [
-  'ALEMBIC_AI_PROVIDER',
-  'ALEMBIC_AI_MODEL',
-  'ALEMBIC_GOOGLE_API_KEY',
-  'ALEMBIC_OPENAI_API_KEY',
-  'ALEMBIC_CLAUDE_API_KEY',
-  'ALEMBIC_DEEPSEEK_API_KEY',
-  'ALEMBIC_AI_PROXY',
-  'ALEMBIC_AI_REASONING_EFFORT',
-  'ALEMBIC_EMBED_PROVIDER',
-  'ALEMBIC_EMBED_MODEL',
-  'ALEMBIC_EMBED_BASE_URL',
-  'ALEMBIC_EMBED_API_KEY',
-];
-
-/**
- * 解析 .env 内容为 key-value（仅提取 LLM 相关变量）
- * 返回 { vars, hasEnvFile, llmReady }
- *   llmReady: provider + 至少一个对应 API Key 已配置
- */
-function parseLlmEnv(envPath: string) {
-  if (!existsSync(envPath)) {
-    return { vars: {}, hasEnvFile: false, llmReady: false };
-  }
-
-  const raw = readFileSync(envPath, 'utf8');
-  const rawVars: Record<string, string> = {};
-  const vars: Record<string, string> = {};
-
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    // 跳过注释和空行
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue;
-    }
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) {
-      continue;
-    }
-    const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed
-      .slice(eqIdx + 1)
-      .trim()
-      .replace(/^["']|["']$/g, '');
-    if (LLM_ENV_KEYS.includes(key)) {
-      rawVars[key] = val;
-      vars[key] = SECRET_ENV_KEYS.has(key) ? maskSecret(val) : val;
-    }
-  }
-
-  // 判断 LLM 是否可用：有 provider + 对应的 API Key
-  const provider = rawVars.ALEMBIC_AI_PROVIDER || '';
-  const keyMap = {
-    google: 'ALEMBIC_GOOGLE_API_KEY',
-    openai: 'ALEMBIC_OPENAI_API_KEY',
-    claude: 'ALEMBIC_CLAUDE_API_KEY',
-    deepseek: 'ALEMBIC_DEEPSEEK_API_KEY',
-    ollama: '', // ollama 不需要 key
-    mock: '', // mock 不需要 key
+function readLlmConfig() {
+  const store = getWorkspaceSettingsStore();
+  const settingsConfig = store.readAiConfig();
+  const processConfig = collectAiEnvOverrides(settingsConfig.env, process.env);
+  const rawVars = {
+    ...settingsConfig.env,
+    ...processConfig,
   };
-  const neededKey = (keyMap as Record<string, string>)[provider] || '';
-  const llmReady = !!provider && (!neededKey || !!rawVars[neededKey]);
+  const vars = maskAiEnvConfig(rawVars);
+  const hasSettings = settingsConfig.hasSettingsFile || settingsConfig.hasSecretsFile;
+  const hasProcessConfig = Object.keys(processConfig).length > 0;
 
-  return { vars, hasEnvFile: true, llmReady };
+  return {
+    vars,
+    hasSettingsFile: settingsConfig.hasSettingsFile,
+    hasSecretsFile: settingsConfig.hasSecretsFile,
+    settingsPath: settingsConfig.settingsPath,
+    secretsPath: settingsConfig.secretsPath,
+    configSource: hasProcessConfig ? 'process-env' : hasSettings ? 'workspace-settings' : 'empty',
+    llmReady: isAiEnvReady(rawVars),
+  };
 }
 
 /**
  * GET /api/v1/ai/env-config
- * 读取用户项目 .env 中的 LLM 配置
+ * 读取工作区 LLM 配置；路径名保留 env-config 以兼容旧 Dashboard。
  */
-router.get('/env-config', async (req: Request, res: Response): Promise<void> => {
-  const envPath = _getProjectEnvPath();
-  const result = parseLlmEnv(envPath);
-  res.json({ success: true, data: result });
+router.get('/env-config', async (_req: Request, res: Response): Promise<void> => {
+  res.json({ success: true, data: readLlmConfig() });
 });
 
 /**
  * POST /api/v1/ai/env-config
- * 写入 / 更新用户项目 .env 中的 LLM 配置
+ * 写入 / 更新工作区 LLM 配置。
  *
  * Body: { provider, model, apiKey, proxy? }
  */
@@ -989,9 +927,6 @@ router.post(
       providerKeys,
     } = req.body;
 
-    const envPath = _getProjectEnvPath();
-    let content = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
-
     const updates: Record<string, string> = {
       ALEMBIC_AI_PROVIDER: provider,
     };
@@ -1006,10 +941,7 @@ router.post(
     }
 
     const providerKeyMap: Record<string, string> = {
-      google: 'ALEMBIC_GOOGLE_API_KEY',
-      openai: 'ALEMBIC_OPENAI_API_KEY',
-      claude: 'ALEMBIC_CLAUDE_API_KEY',
-      deepseek: 'ALEMBIC_DEEPSEEK_API_KEY',
+      ...PROVIDER_KEY_ENV,
     };
 
     // 多 provider key 同时保存
@@ -1047,36 +979,9 @@ router.post(
       return;
     }
 
-    // 逐条合并到 .env 内容
-    for (const [k, v] of Object.entries(updates)) {
-      // 匹配已有行（包括被注释的行）
-      const activeRe = new RegExp(`^${k}\\s*=.*$`, 'm');
-      const commentedRe = new RegExp(`^#\\s*${k}\\s*=.*$`, 'm');
-
-      if (activeRe.test(content)) {
-        // 替换已有活动行
-        content = content.replace(activeRe, `${k}=${v}`);
-      } else if (commentedRe.test(content)) {
-        // 取消注释并赋值
-        content = content.replace(commentedRe, `${k}=${v}`);
-      } else {
-        // 追加到末尾
-        if (!content.endsWith('\n')) {
-          content += '\n';
-        }
-        content += `${k}=${v}\n`;
-      }
-    }
-
-    const wz = container.singletons?.writeZone as
-      | import('../../infrastructure/io/WriteZone.js').WriteZone
-      | undefined;
-    if (wz) {
-      wz.writeFile(wz.project('.env'), content);
-    } else {
-      writeFileSync(envPath, content);
-    }
-    logger.info('LLM env config updated', { provider, model });
+    const store = getWorkspaceSettingsStore();
+    store.writeAiConfig(updates);
+    logger.info('LLM workspace config updated', { provider, model });
 
     // 同步到当前进程环境变量（热生效）
     for (const [k, v] of Object.entries(updates)) {
@@ -1101,8 +1006,7 @@ router.post(
       });
     }
 
-    const result = parseLlmEnv(envPath);
-    res.json({ success: true, data: result });
+    res.json({ success: true, data: readLlmConfig() });
   }
 );
 

@@ -71,7 +71,7 @@ export class AiScanService {
       }
     } catch (err: unknown) {
       throw new Error(
-        `AI Provider 不可用: ${(err as Error).message}\n请在 .env 中配置 ALEMBIC_GOOGLE_API_KEY / ALEMBIC_OPENAI_API_KEY 等`
+        `AI Provider 不可用: ${(err as Error).message}\n请在 Alembic Dashboard 的 AI Settings 中配置 API Key`
       );
     }
 

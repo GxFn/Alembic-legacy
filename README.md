@@ -210,6 +210,24 @@ Knowledge changes auto-deliver to IDE-consumable formats:
 
 > AI-driven features require an LLM API Key. Supports Google / OpenAI / Claude / DeepSeek / Ollama with automatic fallback.
 
+Configure AI in any of these ways:
+
+```bash
+# Dashboard
+alembic ui
+
+# CLI: save provider/model and a key into workspace settings/secrets
+printf %s "$OPENAI_API_KEY" | alembic ai configure --provider openai --model gpt-5.5 --key-stdin
+
+# CLI: persist explicitly exported ALEMBIC_* variables into workspace settings/secrets
+ALEMBIC_AI_PROVIDER=google ALEMBIC_GOOGLE_API_KEY=... alembic ai import-env
+
+# Inspect the effective configuration
+alembic ai status
+```
+
+Explicit process environment variables still work for one-off runs and override workspace settings without being persisted.
+
 ---
 
 ## Project Structure
@@ -299,14 +317,13 @@ brew install ollama && ollama serve
 ollama pull qwen3-embedding:0.6b
 ```
 
-Then add to your project's `.env`:
+Then configure it in Dashboard (`alembic ui`) → Settings → Embedding Model, or via CLI:
 
 ```bash
-ALEMBIC_EMBED_PROVIDER=ollama
-ALEMBIC_EMBED_MODEL=qwen3-embedding:0.6b
+alembic ai configure --embed-provider ollama --embed-model qwen3-embedding:0.6b
 ```
 
-Or configure it in Dashboard (`alembic ui`) → Settings → Embedding Model.
+Alembic stores this in project workspace settings outside the repository in Ghost mode.
 
 After configuring, run `alembic embed` to build the vector index. Semantic search adds ~200–400ms per query (local inference, no API calls, no data leaves your machine).
 

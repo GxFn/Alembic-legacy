@@ -454,7 +454,8 @@ export class ModuleService {
         recipes: [],
         scannedFiles,
         noAi: true,
-        message: 'AI 未配置，已跳过智能提取。请在 .env 中设置 API Key 后重试。',
+        message:
+          'AI 未配置，已跳过智能提取。请在 Alembic Dashboard 的 AI Settings 中设置 API Key 后重试。',
       };
     }
 

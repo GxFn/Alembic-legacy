@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import Constitution from './core/constitution/Constitution.js';
 import ConstitutionValidator from './core/constitution/ConstitutionValidator.js';
@@ -12,9 +11,9 @@ import Logger from './infrastructure/logging/Logger.js';
 import { unwrapRawDb } from './repository/search/SearchRepoAdapter.js';
 import { SkillHooks } from './service/skills/SkillHooks.js';
 import pathGuard from './shared/PathGuard.js';
-import { getGhostWorkspaceDir, ProjectRegistry } from './shared/ProjectRegistry.js';
 import { CONFIG_DIR, PACKAGE_ROOT } from './shared/package-root.js';
 import { WorkspaceResolver } from './shared/WorkspaceResolver.js';
+import { WorkspaceSettingsStore } from './shared/WorkspaceSettingsStore.js';
 
 /** Bootstrap - 应用程序启动器 */
 /** Bootstrap 初始化选项 */
@@ -69,8 +68,8 @@ export class Bootstrap {
     const startTime = Date.now();
 
     try {
-      // 0. 加载 .env 环境变量（仅在未加载过时执行）
-      await this.loadDotEnv();
+      // 0. 加载工作区设置；显式进程环境变量优先
+      await this.loadRuntimeSettings();
 
       // 0.5 确保 PathGuard 已配置（如果调用方未提前配置）
       // MCP 服务器会在 initialize() 之前配置，但 CLI/测试可能跳过
@@ -123,31 +122,13 @@ export class Bootstrap {
     }
   }
 
-  /** 加载 .env 文件（dotenv），不覆盖已有环境变量 */
-  async loadDotEnv() {
+  /** 加载工作区设置，不覆盖用户显式传入的进程环境变量 */
+  async loadRuntimeSettings() {
     try {
       const projectRoot = process.env.ALEMBIC_PROJECT_DIR || process.cwd();
-      const candidates = [path.resolve(projectRoot, '.env'), path.resolve(PACKAGE_ROOT, '.env')];
-
-      // Ghost 模式：.env 在 ~/.asd/workspaces/<id>/.env
-      try {
-        const entry = ProjectRegistry.get(projectRoot);
-        if (entry?.ghost) {
-          candidates.unshift(path.join(getGhostWorkspaceDir(entry.id), '.env'));
-        }
-      } catch {
-        /* registry unreadable — continue with standard candidates */
-      }
-
-      for (const envPath of candidates) {
-        if (existsSync(envPath)) {
-          const dotenv = await import('dotenv');
-          dotenv.config({ path: envPath, override: false, quiet: true });
-          break;
-        }
-      }
+      WorkspaceSettingsStore.fromProject(projectRoot).applyToProcessEnv({ override: false });
     } catch {
-      // dotenv 可选依赖，加载失败不阻塞启动
+      /* settings unreadable — keep explicit process env only */
     }
   }
 
