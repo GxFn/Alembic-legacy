@@ -37,7 +37,7 @@ import type { IntentState, McpContext, McpServiceContainer } from './handlers/ty
 import { createIdleIntent } from './handlers/types.js';
 import { buildMcpToolCapabilities } from './McpCapabilityProjection.js';
 import { McpToolAdapter } from './McpToolAdapter.js';
-import { TIER_ORDER, TOOL_GATEWAY_MAP, TOOLS } from './tools.js';
+import { TIER_ORDER, TOOL_GATEWAY_MAP, TOOLS, withMcpToolAnnotations } from './tools.js';
 
 // ─── TypeScript Interfaces ──────────────────────────────────
 
@@ -254,7 +254,7 @@ export class McpServer {
       const visible = TOOLS.filter(
         (t) => ((TIER_ORDER as Record<string, number>)[t.tier || 'agent'] ?? 0) <= maxTier
       );
-      return { tools: visible };
+      return { tools: visible.map(withMcpToolAnnotations) };
     });
 
     // ── CallTool: 路由到 handler ──

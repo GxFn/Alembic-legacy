@@ -4,10 +4,10 @@ process.env.ALEMBIC_API_SERVER = '1';
 process.env.ALEMBIC_DAEMON_MODE = '1';
 
 import { randomBytes } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { createServer } from 'node:net';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import Bootstrap from '../lib/bootstrap.js';
 import { markInterruptedDaemonJobs } from '../lib/daemon/DaemonJobRunner.js';
 import {
@@ -19,6 +19,7 @@ import {
 import HttpServer from '../lib/http/HttpServer.js';
 import Logger from '../lib/infrastructure/logging/Logger.js';
 import { getServiceContainer } from '../lib/injection/ServiceContainer.js';
+import { DASHBOARD_DIR } from '../lib/shared/package-root.js';
 import { shutdown } from '../lib/shared/shutdown.js';
 import { timerRegistry } from '../lib/shared/TimerRegistry.js';
 
@@ -97,6 +98,7 @@ async function main() {
     throw new Error(`Daemon HTTP server did not bind to a valid port: ${actualPort}`);
   }
   const daemonUrl = buildDaemonUrl(host, actualPort);
+  const dashboardMounted = mountDashboardIfAvailable(httpServer);
   await verifyHttpServerReady(daemonUrl);
 
   const resolver = components.workspaceResolver;
@@ -111,7 +113,7 @@ async function main() {
     host,
     port: actualPort,
     url: daemonUrl,
-    dashboardUrl: daemonUrl,
+    dashboardUrl: dashboardMounted ? daemonUrl : `${daemonUrl}/api-spec`,
     token,
     version: getPackageVersion(),
     mode: 'daemon',
@@ -179,6 +181,19 @@ async function startHttpServer(port: number, host: string): Promise<HttpServer> 
     }
     throw error;
   }
+}
+
+function mountDashboardIfAvailable(httpServer: HttpServer): boolean {
+  const distDir = join(DASHBOARD_DIR, 'dist');
+  const indexPath = join(distDir, 'index.html');
+  if (!existsSync(indexPath)) {
+    Logger.getInstance().warn('Dashboard dist is missing; daemon will serve API routes only', {
+      indexPath,
+    });
+    return false;
+  }
+  httpServer.mountDashboard(distDir);
+  return true;
 }
 
 async function isPortAvailable(port: number, host: string): Promise<boolean> {

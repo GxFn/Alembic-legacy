@@ -146,8 +146,12 @@ try {
   assert(afterStatus.data?.initialized === true, 'status after init should be initialized');
   assert(afterStatus.data?.workspace?.ghost === true, 'codex init should default to Ghost mode');
   assert(
-    afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_task',
-    'initialized workspace should recommend priming Codex'
+    afterStatus.data?.onboarding?.state === 'needs_bootstrap',
+    'initialized empty workspace should still require bootstrap'
+  );
+  assert(
+    afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_codex_bootstrap',
+    'initialized empty workspace should recommend bootstrap'
   );
 
   const store = new JobStore({ projectRoot });
@@ -155,6 +159,12 @@ try {
   const job = await server.handleToolCall('alembic_codex_job', { jobId: localJob.id });
   assertResult(job, 'local job lookup');
   assert(job.data?.job?.id === localJob.id, 'local job lookup returned the wrong job');
+
+  if (shouldRunDaemon) {
+    const recipesDir = afterStatus.data?.workspace?.recipesDir;
+    assert(typeof recipesDir === 'string', 'status after init did not return recipesDir');
+    writeFileSync(join(recipesDir, 'smoke-dashboard.md'), '# Smoke Dashboard\n');
+  }
 
   let stdio = 'skipped';
   if (shouldRunStdio) {
@@ -182,6 +192,14 @@ try {
     assert(
       typeof daemon.data?.dashboardUrl === 'string',
       'dashboard daemon smoke did not return a URL'
+    );
+    const dashboardResponse = await fetch(daemon.data.dashboardUrl);
+    const dashboardHtml = await dashboardResponse.text();
+    assert(
+      dashboardResponse.ok &&
+        dashboardResponse.headers.get('content-type')?.includes('text/html') &&
+        dashboardHtml.includes('<div id="root"'),
+      `dashboard daemon smoke did not serve Dashboard HTML at ${daemon.data.dashboardUrl}`
     );
     const recoveredJob = await server.handleToolCall('alembic_codex_job', {
       jobId: interruptedJob.id,
@@ -396,18 +414,36 @@ async function runStdioSmoke({ packageJson, packageRoot, projectRoot, alembicHom
       () => `MCP tools/list timed out\n${stderr.join('')}`
     );
     const toolNames = new Set(toolsResult.tools.map((tool) => tool.name));
+    const toolsByName = new Map(toolsResult.tools.map((tool) => [tool.name, tool]));
     for (const required of [
       'alembic_codex_status',
       'alembic_codex_diagnostics',
       'alembic_codex_init',
-      'alembic_health',
-      'alembic_task',
     ]) {
       assert(toolNames.has(required), `MCP stdio tools/list missing ${required}`);
     }
-    for (const hidden of ['alembic_enrich_candidates', 'alembic_knowledge_lifecycle']) {
-      assert(!toolNames.has(hidden), `MCP stdio agent tier exposed admin tool ${hidden}`);
+    for (const hidden of [
+      'alembic_health',
+      'alembic_task',
+      'alembic_codex_bootstrap',
+      'alembic_codex_cleanup',
+      'alembic_enrich_candidates',
+      'alembic_knowledge_lifecycle',
+    ]) {
+      assert(!toolNames.has(hidden), `MCP stdio fresh project exposed ${hidden}`);
     }
+    assert(
+      toolsResult.tools.every((tool) => tool.annotations),
+      'MCP stdio tools/list returned tools without annotations'
+    );
+    assert(
+      toolsByName.get('alembic_codex_status')?.annotations?.readOnlyHint === true,
+      'MCP stdio status tool should be annotated read-only'
+    );
+    assert(
+      toolsByName.get('alembic_codex_init')?.annotations?.destructiveHint === false,
+      'MCP stdio init tool should be annotated non-destructive'
+    );
 
     const diagnostics = await callStdioJsonTool(client, 'alembic_codex_diagnostics', {}, stderr);
     assertResult(diagnostics, 'MCP stdio diagnostics');
@@ -453,8 +489,31 @@ async function runStdioSmoke({ packageJson, packageRoot, projectRoot, alembicHom
       'MCP stdio codex init should default to Ghost mode'
     );
     assert(
-      afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_task',
-      'MCP stdio initialized workspace should recommend priming Codex'
+      afterStatus.data?.onboarding?.state === 'needs_bootstrap',
+      'MCP stdio initialized empty workspace should still require bootstrap'
+    );
+    assert(
+      afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_codex_bootstrap',
+      'MCP stdio initialized empty workspace should recommend bootstrap'
+    );
+
+    const afterInitTools = await withTimeout(
+      client.listTools(undefined, { timeout: 5000 }),
+      7000,
+      () => `MCP tools/list after init timed out\n${stderr.join('')}`
+    );
+    const afterInitToolNames = new Set(afterInitTools.tools.map((tool) => tool.name));
+    assert(
+      afterInitToolNames.has('alembic_codex_bootstrap'),
+      'MCP stdio initialized empty workspace should expose bootstrap'
+    );
+    assert(
+      afterInitToolNames.has('alembic_codex_job'),
+      'MCP stdio initialized empty workspace should expose job status'
+    );
+    assert(
+      !afterInitToolNames.has('alembic_task') && !afterInitToolNames.has('alembic_health'),
+      'MCP stdio initialized empty workspace should not expose project-knowledge tools'
     );
 
     const jobs = await callStdioJsonTool(client, 'alembic_codex_job', { limit: 5 }, stderr);

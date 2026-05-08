@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { McpServer as SdkMcpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -15,7 +15,7 @@ import { JobStore } from '../../daemon/JobStore.js';
 import { DEFAULT_FOLDER_NAMES } from '../../shared/folder-names.js';
 import { PACKAGE_ROOT } from '../../shared/package-root.js';
 import { WorkspaceResolver } from '../../shared/WorkspaceResolver.js';
-import { TIER_ORDER, TOOLS } from './tools.js';
+import { TIER_ORDER, TOOLS, withMcpToolAnnotations } from './tools.js';
 
 interface CodexMcpServerOptions {
   projectRoot?: string;
@@ -42,6 +42,24 @@ interface CodexRecommendedAction {
   startsDaemon: boolean;
   tool: string;
 }
+
+interface CodexKnowledgeState {
+  hasKnowledge: boolean;
+  initialized: boolean;
+  recipeCount: number;
+  skillCount: number;
+  usable: boolean;
+}
+
+const CODEX_DISCOVERY_TOOL_NAMES = new Set(['alembic_codex_status', 'alembic_codex_diagnostics']);
+
+const CODEX_INIT_TOOL_NAMES = new Set([...CODEX_DISCOVERY_TOOL_NAMES, 'alembic_codex_init']);
+
+const CODEX_COLD_START_TOOL_NAMES = new Set([
+  ...CODEX_INIT_TOOL_NAMES,
+  'alembic_codex_bootstrap',
+  'alembic_codex_job',
+]);
 
 export const CODEX_LOCAL_TOOLS = [
   {
@@ -207,7 +225,9 @@ export class CodexMcpServer {
     );
     this.registerHandlers();
     await this.sdkServer.connect(new StdioServerTransport());
-    process.stderr.write(`Alembic Codex MCP ready — ${getVisibleCodexTools().length} tools\n`);
+    process.stderr.write(
+      `Alembic Codex MCP ready — ${getVisibleCodexTools(undefined, this.projectRoot).length} tools\n`
+    );
   }
 
   async shutdown(): Promise<void> {
@@ -223,7 +243,7 @@ export class CodexMcpServer {
     const server = this.sdkServer.server;
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: getVisibleCodexTools(),
+      tools: getVisibleCodexTools(undefined, this.projectRoot),
     }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -245,6 +265,19 @@ export class CodexMcpServer {
   }
 
   async handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const knowledge = inspectCodexKnowledge(this.projectRoot);
+    if (!isToolAllowedForCodexKnowledge(name, knowledge)) {
+      return failureResult(
+        name,
+        'Alembic project-knowledge tools are hidden until this project has a usable Alembic knowledge base. Use the cold-start initialization tools first.',
+        {
+          allowedTools: [...allowedCodexToolNames(knowledge)],
+          errorCode: 'CODEX_ALEMBIC_KNOWLEDGE_REQUIRED',
+          nextActions: buildKnowledgeGateActions(knowledge),
+        }
+      );
+    }
+
     switch (name) {
       case 'alembic_codex_status':
         return this.buildStatus();
@@ -273,22 +306,18 @@ export class CodexMcpServer {
     const resolver = WorkspaceResolver.fromProject(this.projectRoot);
     const facts = resolver.toFacts();
     const daemonStatus = await this.supervisor.status(this.projectRoot);
-    const initialized =
-      existsSync(resolver.configPath) &&
-      existsSync(resolver.databasePath) &&
-      existsSync(resolver.knowledgeDir) &&
-      existsSync(resolver.recipesDir);
+    const knowledge = inspectCodexKnowledge(this.projectRoot);
     const diagnostics = buildRuntimeDiagnostics(daemonStatus);
     const onboarding = buildStatusOnboarding({
       daemonStatus,
       diagnostics,
-      initialized,
+      knowledge,
     });
 
     return {
       success: true,
       data: {
-        initialized,
+        initialized: knowledge.initialized,
         projectRoot: this.projectRoot,
         registry: {
           registered: facts.registered,
@@ -310,6 +339,7 @@ export class CodexMcpServer {
           skillsDir: resolver.skillsDir,
           wikiDir: resolver.wikiDir,
         },
+        knowledge,
         projectArtifacts: {
           runtimeExists: existsSync(join(this.projectRoot, DEFAULT_FOLDER_NAMES.project.runtime)),
           knowledgeExists: existsSync(
@@ -347,26 +377,20 @@ export class CodexMcpServer {
     const results = await service.run();
     const status = await this.buildStatus();
     const ok = results.every((result) => result.ok);
+    const knowledgeAfterInit = (status as { data?: { knowledge?: CodexKnowledgeState } }).data
+      ?.knowledge ?? {
+      hasKnowledge: false,
+      initialized: false,
+      recipeCount: 0,
+      skillCount: 0,
+      usable: false,
+    };
     return {
       success: ok,
       data: {
         mode: args.standard === true ? 'standard' : 'ghost',
         nextActions: ok
-          ? [
-              buildRecommendedAction({
-                label: 'Start bootstrap',
-                reason: 'Build Alembic project knowledge in a recoverable background job.',
-                startsDaemon: true,
-                tool: 'alembic_codex_bootstrap',
-              }),
-              buildRecommendedAction({
-                arguments: { operation: 'prime' },
-                label: 'Prime Codex',
-                reason: 'Load the most relevant Alembic Recipes before non-trivial coding work.',
-                startsDaemon: true,
-                tool: 'alembic_task',
-              }),
-            ]
+          ? buildPostInitActions(knowledgeAfterInit)
           : [
               buildRecommendedAction({
                 label: 'Run diagnostics',
@@ -380,7 +404,7 @@ export class CodexMcpServer {
         status: (status as { data?: unknown }).data,
       },
       message: ok
-        ? 'Alembic Codex workspace initialized. Next: start bootstrap or prime Codex.'
+        ? buildPostInitMessage(knowledgeAfterInit)
         : 'Alembic Codex initialization failed. Run diagnostics before retrying.',
     };
   }
@@ -616,13 +640,173 @@ export class CodexMcpServer {
   }
 }
 
-export function getVisibleCodexTools(tierName = process.env.ALEMBIC_MCP_TIER || 'agent') {
+export function getVisibleCodexTools(
+  tierName = process.env.ALEMBIC_MCP_TIER || 'agent',
+  projectRoot = resolveProjectRoot()
+) {
+  const knowledge = inspectCodexKnowledge(projectRoot);
+  const allowedNames = allowedCodexToolNames(knowledge);
   const effectiveTier = resolveEffectiveCodexTier(tierName);
   const maxTier = (TIER_ORDER as Record<string, number>)[effectiveTier] ?? TIER_ORDER.agent;
   const coreTools = TOOLS.filter(
-    (tool) => ((TIER_ORDER as Record<string, number>)[tool.tier || 'agent'] ?? 0) <= maxTier
+    (tool) =>
+      knowledge.usable &&
+      ((TIER_ORDER as Record<string, number>)[tool.tier || 'agent'] ?? 0) <= maxTier
   );
-  return [...CODEX_LOCAL_TOOLS, ...coreTools];
+  const localTools = CODEX_LOCAL_TOOLS.filter((tool) => allowedNames.has(tool.name));
+  return [...localTools, ...coreTools].map(withMcpToolAnnotations);
+}
+
+function allowedCodexToolNames(knowledge: CodexKnowledgeState): Set<string> {
+  if (knowledge.usable) {
+    return new Set(CODEX_LOCAL_TOOLS.map((tool) => tool.name));
+  }
+  if (knowledge.initialized) {
+    return CODEX_COLD_START_TOOL_NAMES;
+  }
+  return CODEX_INIT_TOOL_NAMES;
+}
+
+function isToolAllowedForCodexKnowledge(name: string, knowledge: CodexKnowledgeState): boolean {
+  if (knowledge.usable) {
+    return true;
+  }
+  return allowedCodexToolNames(knowledge).has(name);
+}
+
+function inspectCodexKnowledge(projectRoot: string): CodexKnowledgeState {
+  let resolver: WorkspaceResolver;
+  try {
+    resolver = WorkspaceResolver.fromProject(projectRoot);
+  } catch {
+    resolver = new WorkspaceResolver({ projectRoot });
+  }
+  const initialized =
+    existsSync(resolver.configPath) &&
+    existsSync(resolver.databasePath) &&
+    existsSync(resolver.knowledgeDir) &&
+    existsSync(resolver.recipesDir);
+  const recipeCount = countMarkdownFiles(resolver.recipesDir, {
+    excludeNames: new Set(['_template.md']),
+  });
+  const skillCount = countSkillFiles(resolver.skillsDir);
+  const hasKnowledge = recipeCount > 0 || skillCount > 0;
+  return {
+    hasKnowledge,
+    initialized,
+    recipeCount,
+    skillCount,
+    usable: initialized && hasKnowledge,
+  };
+}
+
+function countMarkdownFiles(dir: string, options: { excludeNames?: Set<string> } = {}): number {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).reduce((count, entry) => {
+      if (entry.isDirectory()) {
+        return count + countMarkdownFiles(join(dir, entry.name), options);
+      }
+      return (
+        count +
+        (entry.isFile() && entry.name.endsWith('.md') && !options.excludeNames?.has(entry.name)
+          ? 1
+          : 0)
+      );
+    }, 0);
+  } catch {
+    return 0;
+  }
+}
+
+function countSkillFiles(dir: string): number {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).reduce(
+      (count, entry) =>
+        count + (entry.isDirectory() && existsSync(join(dir, entry.name, 'SKILL.md')) ? 1 : 0),
+      0
+    );
+  } catch {
+    return 0;
+  }
+}
+
+function buildPostInitActions(knowledge: CodexKnowledgeState): CodexRecommendedAction[] {
+  if (knowledge.usable) {
+    return [
+      buildRecommendedAction({
+        arguments: { operation: 'prime' },
+        label: 'Prime Codex',
+        reason: 'Load the most relevant Alembic Recipes before non-trivial coding work.',
+        startsDaemon: true,
+        tool: 'alembic_task',
+      }),
+      buildRecommendedAction({
+        label: 'Start bootstrap',
+        reason: 'Refresh Alembic project knowledge in a recoverable background job.',
+        startsDaemon: true,
+        tool: 'alembic_codex_bootstrap',
+      }),
+    ];
+  }
+  return [
+    buildRecommendedAction({
+      label: 'Start bootstrap',
+      reason: 'Build the first Alembic project knowledge in a recoverable background job.',
+      startsDaemon: true,
+      tool: 'alembic_codex_bootstrap',
+    }),
+    buildRecommendedAction({
+      arguments: { limit: 10 },
+      label: 'List jobs',
+      reason: 'Recover bootstrap job status after Codex reconnects.',
+      startsDaemon: false,
+      tool: 'alembic_codex_job',
+    }),
+  ];
+}
+
+function buildPostInitMessage(knowledge: CodexKnowledgeState): string {
+  return knowledge.usable
+    ? 'Alembic Codex workspace initialized with usable project knowledge. Next: prime Codex or refresh bootstrap.'
+    : 'Alembic Codex workspace initialized. Next: start bootstrap to build the first usable project knowledge.';
+}
+
+function buildKnowledgeGateActions(knowledge: CodexKnowledgeState): CodexRecommendedAction[] {
+  const actions = [
+    buildRecommendedAction({
+      label: 'Check workspace status',
+      reason: 'Inspect whether this project is initialized and whether Alembic knowledge exists.',
+      startsDaemon: false,
+      tool: 'alembic_codex_status',
+    }),
+  ];
+  if (!knowledge.initialized) {
+    actions.push(
+      buildRecommendedAction({
+        label: 'Initialize Ghost workspace',
+        reason: 'Create Alembic Codex data roots without writing IDE MCP files into the project.',
+        startsDaemon: false,
+        tool: 'alembic_codex_init',
+      })
+    );
+  } else {
+    actions.push(
+      buildRecommendedAction({
+        label: 'Start bootstrap',
+        reason: 'Build the first Alembic project knowledge in a recoverable background job.',
+        startsDaemon: true,
+        tool: 'alembic_codex_bootstrap',
+      }),
+      buildRecommendedAction({
+        arguments: { limit: 10 },
+        label: 'List jobs',
+        reason: 'Recover bootstrap job status after Codex reconnects.',
+        startsDaemon: false,
+        tool: 'alembic_codex_job',
+      })
+    );
+  }
+  return actions;
 }
 
 function resolveEffectiveCodexTier(tierName: string): string {
@@ -732,7 +916,7 @@ function buildRuntimeDiagnostics(daemonStatus: DaemonStatus): Record<string, unk
 function buildStatusOnboarding(input: {
   daemonStatus: DaemonStatus;
   diagnostics: Record<string, unknown>;
-  initialized: boolean;
+  knowledge: CodexKnowledgeState;
 }): Record<string, unknown> {
   const diagnosticsOk = input.diagnostics.ok !== false;
   if (!diagnosticsOk) {
@@ -758,14 +942,17 @@ function buildStatusOnboarding(input: {
     };
   }
 
-  if (!input.initialized) {
+  if (!input.knowledge.initialized) {
     return {
-      state: 'needs_init',
-      summary:
-        'Alembic Codex is installed and the runtime is healthy, but this workspace has not been initialized yet.',
+      state: input.knowledge.hasKnowledge ? 'needs_init_existing_knowledge' : 'needs_init',
+      summary: input.knowledge.hasKnowledge
+        ? 'Alembic knowledge files exist for this project, but the Codex workspace runtime has not been initialized yet.'
+        : 'Alembic Codex is installed and the runtime is healthy, but this workspace has not been initialized yet.',
       primaryAction: buildRecommendedAction({
         label: 'Initialize Ghost workspace',
-        reason: 'Create Alembic Codex data roots without writing IDE MCP files into the project.',
+        reason: input.knowledge.hasKnowledge
+          ? 'Connect Codex to the existing Alembic knowledge base without writing IDE MCP files into the project.'
+          : 'Create Alembic Codex data roots without writing IDE MCP files into the project.',
         startsDaemon: false,
         tool: 'alembic_codex_init',
       }),
@@ -776,14 +963,46 @@ function buildStatusOnboarding(input: {
           startsDaemon: false,
           tool: 'alembic_codex_init',
         }),
+      ],
+      notes: [
+        input.knowledge.hasKnowledge
+          ? 'Only cold-start initialization tools are exposed until setup completes.'
+          : 'Only cold-start initialization tools are exposed until Alembic knowledge exists.',
+        'Ghost mode keeps Alembic data outside the repository by default.',
+      ],
+    };
+  }
+
+  if (!input.knowledge.usable) {
+    return {
+      state: 'needs_bootstrap',
+      summary:
+        'Alembic Codex is initialized, but this project does not have usable Alembic Recipes or Project Skills yet.',
+      primaryAction: buildRecommendedAction({
+        label: 'Start bootstrap',
+        reason: 'Build the first Alembic project knowledge in a recoverable background job.',
+        startsDaemon: true,
+        tool: 'alembic_codex_bootstrap',
+      }),
+      nextActions: [
         buildRecommendedAction({
-          label: 'Open Dashboard',
-          reason: 'Start the daemon only when you want the Dashboard or background jobs.',
+          label: 'Start bootstrap',
+          reason: 'Create the initial Alembic knowledge base for this project.',
           startsDaemon: true,
-          tool: 'alembic_codex_dashboard',
+          tool: 'alembic_codex_bootstrap',
+        }),
+        buildRecommendedAction({
+          arguments: { limit: 10 },
+          label: 'List jobs',
+          reason: 'Recover bootstrap job status after Codex reconnects.',
+          startsDaemon: false,
+          tool: 'alembic_codex_job',
         }),
       ],
-      notes: ['Ghost mode keeps Alembic data outside the repository by default.'],
+      notes: [
+        'Project-knowledge tools stay hidden until Recipes or Project Skills exist.',
+        'Prime, Guard, search, rescan, and lifecycle tools are available after the knowledge base is usable.',
+      ],
     };
   }
 

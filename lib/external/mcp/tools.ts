@@ -16,6 +16,8 @@
  * Admin tools (2):
  *   15-16: enrich_candidates/knowledge_lifecycle
  */
+
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import {
@@ -92,6 +94,98 @@ const _ConsolidateSchema =
 
 // ─── Tier Definitions ────────────────────────────────────────
 export const TIER_ORDER = { agent: 0, admin: 1 };
+
+type ToolLike = {
+  annotations?: ToolAnnotations;
+  name: string;
+};
+
+function readOnlyTool(title: string): ToolAnnotations {
+  return {
+    title,
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  };
+}
+
+function localWriteTool(title: string, idempotentHint = false): ToolAnnotations {
+  return {
+    title,
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint,
+    openWorldHint: false,
+  };
+}
+
+function aiBackedWriteTool(title: string): ToolAnnotations {
+  return {
+    title,
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  };
+}
+
+function destructiveTool(title: string, idempotentHint = false): ToolAnnotations {
+  return {
+    title,
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint,
+    openWorldHint: false,
+  };
+}
+
+const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
+  alembic_codex_status: readOnlyTool('Check Alembic Codex Status'),
+  alembic_codex_diagnostics: readOnlyTool('Run Alembic Codex Diagnostics'),
+  alembic_codex_init: localWriteTool('Initialize Alembic Codex Workspace', true),
+  alembic_codex_dashboard: localWriteTool('Start Alembic Dashboard', true),
+  alembic_codex_bootstrap: aiBackedWriteTool('Start Alembic Bootstrap Job'),
+  alembic_codex_rescan: aiBackedWriteTool('Start Alembic Rescan Job'),
+  alembic_codex_job: readOnlyTool('Read Alembic Job Status'),
+  alembic_codex_stop: localWriteTool('Stop Alembic Daemon', true),
+  alembic_codex_cleanup: destructiveTool('Clean Alembic Runtime State'),
+  alembic_health: readOnlyTool('Check Alembic Health'),
+  alembic_search: readOnlyTool('Search Alembic Knowledge'),
+  alembic_knowledge: localWriteTool('Browse Or Mark Alembic Knowledge Usage'),
+  alembic_structure: readOnlyTool('Explore Project Structure'),
+  alembic_graph: readOnlyTool('Query Alembic Knowledge Graph'),
+  alembic_call_context: readOnlyTool('Query Code Call Context'),
+  alembic_guard: readOnlyTool('Run Alembic Guard Check'),
+  alembic_submit_knowledge: aiBackedWriteTool('Submit Alembic Knowledge Candidate'),
+  alembic_skill: localWriteTool('Manage Alembic Skills'),
+  alembic_bootstrap: aiBackedWriteTool('Run Alembic Bootstrap'),
+  alembic_rescan: aiBackedWriteTool('Run Alembic Rescan'),
+  alembic_evolve: destructiveTool('Apply Alembic Evolution Decision'),
+  alembic_consolidate: localWriteTool('Review Alembic Consolidation Decision'),
+  alembic_dimension_complete: localWriteTool('Complete Alembic Dimension Analysis'),
+  alembic_wiki: localWriteTool('Plan Or Finalize Alembic Wiki'),
+  alembic_panorama: localWriteTool('Query Or Refresh Alembic Panorama'),
+  alembic_task: localWriteTool('Manage Alembic Task State'),
+  alembic_enrich_candidates: readOnlyTool('Diagnose Alembic Candidate Fields'),
+  alembic_knowledge_lifecycle: destructiveTool('Update Alembic Knowledge Lifecycle'),
+};
+
+export function withMcpToolAnnotations<T extends ToolLike>(
+  tool: T
+): T & { annotations?: ToolAnnotations } {
+  const annotations = TOOL_ANNOTATIONS[tool.name];
+  if (!annotations) {
+    return tool;
+  }
+  return {
+    ...tool,
+    annotations: {
+      ...annotations,
+      ...tool.annotations,
+    },
+  };
+}
 
 // ─── Gateway Mapping (only write operations require gating) ─
 

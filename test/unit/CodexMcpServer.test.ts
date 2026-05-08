@@ -11,6 +11,7 @@ import {
 import type { DaemonStatus } from '../../lib/daemon/DaemonSupervisor.js';
 import { JobStore } from '../../lib/daemon/JobStore.js';
 import { CodexMcpServer, getVisibleCodexTools } from '../../lib/external/mcp/CodexMcpServer.js';
+import { getGhostWorkspaceDir, ProjectRegistry } from '../../lib/shared/ProjectRegistry.js';
 
 const ORIGINAL_ALEMBIC_HOME = process.env.ALEMBIC_HOME;
 const ORIGINAL_CODEX_ENABLE_ADMIN = process.env.ALEMBIC_CODEX_ENABLE_ADMIN;
@@ -24,6 +25,22 @@ function useTempAlembicHome(): string {
 
 function makeProjectRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'alembic-codex-project-'));
+}
+
+function makeInitializedWorkspace(projectRoot: string): void {
+  fs.mkdirSync(path.join(projectRoot, '.asd'), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, '.asd', 'config.json'), '{}\n');
+  fs.writeFileSync(path.join(projectRoot, '.asd', 'alembic.db'), '');
+  fs.mkdirSync(path.join(projectRoot, 'Alembic', 'recipes'), { recursive: true });
+  fs.mkdirSync(path.join(projectRoot, 'Alembic', 'skills'), { recursive: true });
+}
+
+function makeUsableKnowledgeBase(projectRoot: string): void {
+  makeInitializedWorkspace(projectRoot);
+  fs.writeFileSync(
+    path.join(projectRoot, 'Alembic', 'recipes', 'http-client.md'),
+    '---\ntitle: HTTP Client\n---\nUse the project HTTP client.\n'
+  );
 }
 
 function makeDaemonState(projectRoot: string, overrides: Partial<DaemonState> = {}): DaemonState {
@@ -101,7 +118,9 @@ afterEach(() => {
 
 describe('CodexMcpServer', () => {
   test('lists Codex local tools alongside agent-tier Alembic tools', () => {
-    const tools = getVisibleCodexTools('agent');
+    const projectRoot = makeProjectRoot();
+    makeUsableKnowledgeBase(projectRoot);
+    const tools = getVisibleCodexTools('agent', projectRoot);
     const names = tools.map((tool) => tool.name);
 
     expect(names).toContain('alembic_codex_status');
@@ -114,17 +133,107 @@ describe('CodexMcpServer', () => {
     expect(names).not.toContain('alembic_knowledge_lifecycle');
   });
 
+  test('exposes MCP tool annotations so clients can reduce approval prompts', () => {
+    const projectRoot = makeProjectRoot();
+    makeUsableKnowledgeBase(projectRoot);
+    const tools = getVisibleCodexTools('agent', projectRoot);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+
+    expect(tools.every((tool) => tool.annotations)).toBe(true);
+    expect(byName.get('alembic_codex_status')?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(byName.get('alembic_guard')?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(byName.get('alembic_codex_bootstrap')?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    });
+    expect(byName.get('alembic_codex_cleanup')?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  });
+
+  test('hides project-knowledge tools before workspace initialization', () => {
+    const projectRoot = makeProjectRoot();
+    const names = getVisibleCodexTools('agent', projectRoot).map((tool) => tool.name);
+
+    expect(names).toEqual([
+      'alembic_codex_status',
+      'alembic_codex_diagnostics',
+      'alembic_codex_init',
+    ]);
+  });
+
+  test('exposes only cold-start tools when initialized workspace has no usable knowledge', () => {
+    const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
+    const names = getVisibleCodexTools('agent', projectRoot).map((tool) => tool.name);
+
+    expect(names).toEqual([
+      'alembic_codex_status',
+      'alembic_codex_diagnostics',
+      'alembic_codex_init',
+      'alembic_codex_bootstrap',
+      'alembic_codex_job',
+    ]);
+    expect(names).not.toContain('alembic_task');
+    expect(names).not.toContain('alembic_health');
+    expect(names).not.toContain('alembic_codex_dashboard');
+  });
+
+  test('detects usable knowledge from the registered ghost data root', () => {
+    useTempAlembicHome();
+    const projectRoot = makeProjectRoot();
+    const entry = ProjectRegistry.register(projectRoot, true);
+    const ghostRoot = getGhostWorkspaceDir(entry.id);
+    makeInitializedWorkspace(ghostRoot);
+    fs.mkdirSync(path.join(projectRoot, 'Alembic', 'recipes'), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectRoot, 'Alembic', 'recipes', 'project-tree-should-not-count.md'),
+      '# Ignored Project Tree Recipe\n'
+    );
+
+    expect(getVisibleCodexTools('agent', projectRoot).map((tool) => tool.name)).toEqual([
+      'alembic_codex_status',
+      'alembic_codex_diagnostics',
+      'alembic_codex_init',
+      'alembic_codex_bootstrap',
+      'alembic_codex_job',
+    ]);
+
+    fs.writeFileSync(
+      path.join(ghostRoot, 'Alembic', 'recipes', 'ghost-recipe.md'),
+      '# Ghost Recipe\n'
+    );
+
+    const names = getVisibleCodexTools('agent', projectRoot).map((tool) => tool.name);
+
+    expect(names).toContain('alembic_task');
+    expect(names).toContain('alembic_health');
+    expect(names).toContain('alembic_codex_dashboard');
+  });
+
   test('requires a second Codex admin opt-in before exposing admin-tier tools', () => {
+    const projectRoot = makeProjectRoot();
+    makeUsableKnowledgeBase(projectRoot);
     process.env.ALEMBIC_MCP_TIER = 'admin';
     delete process.env.ALEMBIC_CODEX_ENABLE_ADMIN;
 
-    expect(getVisibleCodexTools().map((tool) => tool.name)).not.toContain(
+    expect(getVisibleCodexTools(undefined, projectRoot).map((tool) => tool.name)).not.toContain(
       'alembic_knowledge_lifecycle'
     );
 
     process.env.ALEMBIC_CODEX_ENABLE_ADMIN = '1';
 
-    expect(getVisibleCodexTools().map((tool) => tool.name)).toContain(
+    expect(getVisibleCodexTools(undefined, projectRoot).map((tool) => tool.name)).toContain(
       'alembic_knowledge_lifecycle'
     );
   });
@@ -169,6 +278,39 @@ describe('CodexMcpServer', () => {
       'Initialize Ghost workspace: call alembic_codex_init'
     );
     expect(supervisor.status).toHaveBeenCalledTimes(1);
+    expect(supervisor.ensure).not.toHaveBeenCalled();
+  });
+
+  test('status recommends bootstrap after initialization when knowledge is still empty', async () => {
+    useTempAlembicHome();
+    const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
+    const supervisor = makeSupervisor(
+      makeDaemonStatus(projectRoot, {
+        status: 'stopped',
+        ready: false,
+        state: null,
+        pidAlive: false,
+      })
+    );
+    const server = new CodexMcpServer({ projectRoot, supervisor });
+
+    const result = (await server.handleToolCall('alembic_codex_status', {})) as {
+      success: boolean;
+      data: {
+        initialized: boolean;
+        knowledge: { usable: boolean; recipeCount: number; skillCount: number };
+        onboarding: { primaryAction: { tool: string }; state: string };
+      };
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.data.initialized).toBe(true);
+    expect(result.data.knowledge).toMatchObject({ usable: false, recipeCount: 0, skillCount: 0 });
+    expect(result.data.onboarding).toMatchObject({
+      state: 'needs_bootstrap',
+      primaryAction: { tool: 'alembic_codex_bootstrap' },
+    });
     expect(supervisor.ensure).not.toHaveBeenCalled();
   });
 
@@ -257,6 +399,7 @@ describe('CodexMcpServer', () => {
   test('core Alembic tools ensure daemon and forward through the local bridge token', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeUsableKnowledgeBase(projectRoot);
     const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async (_input, _init) =>
@@ -280,9 +423,27 @@ describe('CodexMcpServer', () => {
     expect(body.actor).toMatchObject({ role: 'external_agent' });
   });
 
+  test('blocks project-knowledge tools when no usable knowledge base exists', async () => {
+    useTempAlembicHome();
+    const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
+    const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
+    const server = new CodexMcpServer({ projectRoot, supervisor });
+
+    const result = (await server.handleToolCall('alembic_health', {})) as {
+      data: { errorCode?: string };
+      success: boolean;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.data.errorCode).toBe('CODEX_ALEMBIC_KNOWLEDGE_REQUIRED');
+    expect(supervisor.ensure).not.toHaveBeenCalled();
+  });
+
   test('Codex bootstrap job ensures daemon and posts to the daemon jobs API', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
     const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () =>
@@ -311,6 +472,7 @@ describe('CodexMcpServer', () => {
   test('Codex job status reads local JobStore without starting daemon', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
     const supervisor = makeSupervisor(
       makeDaemonStatus(projectRoot, {
         status: 'stopped',
@@ -337,6 +499,7 @@ describe('CodexMcpServer', () => {
   test('Codex job status uses daemon jobs API when it is already running', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
     const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () =>
@@ -370,6 +533,7 @@ describe('CodexMcpServer', () => {
   test('Codex job status falls back to local JobStore when daemon job API is unavailable', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeInitializedWorkspace(projectRoot);
     const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
     const store = new JobStore({ projectRoot });
     const job = store.create({ kind: 'bootstrap', request: { maxFiles: 25 }, source: 'codex' });
@@ -390,6 +554,7 @@ describe('CodexMcpServer', () => {
   test('cleanup defaults to dry-run and does not stop daemon', async () => {
     useTempAlembicHome();
     const projectRoot = makeProjectRoot();
+    makeUsableKnowledgeBase(projectRoot);
     const supervisor = makeSupervisor(makeDaemonStatus(projectRoot));
     const server = new CodexMcpServer({ projectRoot, supervisor });
 
