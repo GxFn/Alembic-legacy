@@ -12,7 +12,14 @@ Alembic for Codex uses a lightweight MCP shim. The shim can report local status 
 
 Use `alembic_codex_diagnostics` first. It reports Node, npm, npx, package version, daemon version, plugin metadata checks, offline fallback guidance, cleanup policy, and structured `issues` / `nextActions`.
 
-Use `alembic_codex_status` to inspect workspace initialization and daemon state without starting the daemon.
+Use `alembic_codex_status` to inspect workspace initialization and daemon state without starting the daemon. The response includes an `onboarding` block with a concise state, primary recommended tool call, whether that call starts the daemon, and follow-up actions.
+
+The normal first minute is:
+
+1. `alembic_codex_diagnostics`
+2. `alembic_codex_status`
+3. `alembic_codex_init` when status reports `needs_init`
+4. `alembic_codex_bootstrap` for first project knowledge, or `alembic_task` with `operation=prime` before coding work
 
 ## Long-Running Jobs
 

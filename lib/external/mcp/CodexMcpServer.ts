@@ -35,12 +35,20 @@ interface CodexToolCallActor {
   sessionId?: string;
 }
 
+interface CodexRecommendedAction {
+  arguments: Record<string, unknown>;
+  label: string;
+  reason: string;
+  startsDaemon: boolean;
+  tool: string;
+}
+
 export const CODEX_LOCAL_TOOLS = [
   {
     name: 'alembic_codex_status',
     tier: 'agent',
     description:
-      'Check Alembic Codex plugin status without starting the daemon. Reports workspace, Ghost data root, initialization, and daemon state.',
+      'Check Alembic Codex plugin status without starting the daemon. Reports workspace, Ghost data root, initialization, daemon state, and the recommended next tool call.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -51,7 +59,7 @@ export const CODEX_LOCAL_TOOLS = [
     name: 'alembic_codex_diagnostics',
     tier: 'agent',
     description:
-      'Run Alembic Codex runtime diagnostics without starting the daemon. Checks Node, npm, npx, package pinning, daemon version, offline fallback, and admin mode gate.',
+      'Run Alembic Codex runtime diagnostics without starting the daemon. Checks Node, npm, npx, package pinning, daemon version, offline fallback, admin mode gate, and first-run next actions.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -62,7 +70,7 @@ export const CODEX_LOCAL_TOOLS = [
     name: 'alembic_codex_init',
     tier: 'agent',
     description:
-      'Initialize Alembic for Codex plugin use. Defaults to Ghost mode and skips IDE file deployment.',
+      'Initialize Alembic for Codex plugin use. Defaults to Ghost mode, skips IDE file deployment, and returns next actions for bootstrap or priming.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -83,7 +91,7 @@ export const CODEX_LOCAL_TOOLS = [
     name: 'alembic_codex_dashboard',
     tier: 'agent',
     description:
-      'Start or connect to the project Alembic daemon and return the local Dashboard URL.',
+      'Start or connect to the project Alembic daemon and return the local Dashboard URL plus follow-up job actions.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -270,6 +278,12 @@ export class CodexMcpServer {
       existsSync(resolver.databasePath) &&
       existsSync(resolver.knowledgeDir) &&
       existsSync(resolver.recipesDir);
+    const diagnostics = buildRuntimeDiagnostics(daemonStatus);
+    const onboarding = buildStatusOnboarding({
+      daemonStatus,
+      diagnostics,
+      initialized,
+    });
 
     return {
       success: true,
@@ -306,13 +320,9 @@ export class CodexMcpServer {
           vscodeMcpExists: existsSync(join(this.projectRoot, '.vscode', 'mcp.json')),
         },
         daemon: summarizeDaemonStatus(daemonStatus),
-        diagnostics: buildRuntimeDiagnostics(daemonStatus),
-        nextActions: initialized
-          ? [
-              'Call alembic_task(operation=prime) before non-trivial coding tasks.',
-              'Call alembic_guard after changing code.',
-            ]
-          : ['Call alembic_codex_init before using Alembic project knowledge.'],
+        diagnostics,
+        onboarding,
+        nextActions: buildActionLabels(onboarding.nextActions),
       },
     };
   }
@@ -340,11 +350,38 @@ export class CodexMcpServer {
     return {
       success: ok,
       data: {
+        mode: args.standard === true ? 'standard' : 'ghost',
+        nextActions: ok
+          ? [
+              buildRecommendedAction({
+                label: 'Start bootstrap',
+                reason: 'Build Alembic project knowledge in a recoverable background job.',
+                startsDaemon: true,
+                tool: 'alembic_codex_bootstrap',
+              }),
+              buildRecommendedAction({
+                arguments: { operation: 'prime' },
+                label: 'Prime Codex',
+                reason: 'Load the most relevant Alembic Recipes before non-trivial coding work.',
+                startsDaemon: true,
+                tool: 'alembic_task',
+              }),
+            ]
+          : [
+              buildRecommendedAction({
+                label: 'Run diagnostics',
+                reason: 'Inspect runtime, package, and plugin metadata before retrying setup.',
+                startsDaemon: false,
+                tool: 'alembic_codex_diagnostics',
+              }),
+            ],
         profile: 'codex-plugin',
         results,
         status: (status as { data?: unknown }).data,
       },
-      message: ok ? 'Alembic Codex workspace initialized.' : 'Alembic Codex initialization failed.',
+      message: ok
+        ? 'Alembic Codex workspace initialized. Next: start bootstrap or prime Codex.'
+        : 'Alembic Codex initialization failed. Run diagnostics before retrying.',
     };
   }
 
@@ -357,7 +394,17 @@ export class CodexMcpServer {
       return {
         success: false,
         message: daemon.message || 'Alembic daemon is not ready yet.',
-        data: { daemon: summarizeDaemonStatus(daemon) },
+        data: {
+          daemon: summarizeDaemonStatus(daemon),
+          nextActions: [
+            buildRecommendedAction({
+              label: 'Run diagnostics',
+              reason: 'Check Node, npm, package pinning, and daemon state before retrying.',
+              startsDaemon: false,
+              tool: 'alembic_codex_diagnostics',
+            }),
+          ],
+        },
       };
     }
     return {
@@ -365,6 +412,21 @@ export class CodexMcpServer {
       data: {
         dashboardUrl: daemon.state.dashboardUrl || daemon.state.url,
         daemon: summarizeDaemonStatus(daemon),
+        nextActions: [
+          buildRecommendedAction({
+            label: 'Start bootstrap',
+            reason: 'Create or refresh Alembic project knowledge from the Dashboard-backed daemon.',
+            startsDaemon: true,
+            tool: 'alembic_codex_bootstrap',
+          }),
+          buildRecommendedAction({
+            arguments: { limit: 10 },
+            label: 'List jobs',
+            reason: 'Recover job status after Codex reconnects or the Dashboard refreshes.',
+            startsDaemon: false,
+            tool: 'alembic_codex_job',
+          }),
+        ],
       },
     };
   }
@@ -431,7 +493,17 @@ export class CodexMcpServer {
       return failureResult(
         `alembic_codex_${kind}`,
         daemon.message || 'Alembic daemon is not ready yet.',
-        { daemon: summarizeDaemonStatus(daemon) }
+        {
+          daemon: summarizeDaemonStatus(daemon),
+          nextActions: [
+            buildRecommendedAction({
+              label: 'Run diagnostics',
+              reason: 'Check daemon startup state before retrying the job.',
+              startsDaemon: false,
+              tool: 'alembic_codex_diagnostics',
+            }),
+          ],
+        }
       );
     }
     if (!daemon.state.token) {
@@ -593,9 +665,24 @@ function buildRuntimeDiagnostics(daemonStatus: DaemonStatus): Record<string, unk
 
   return {
     ok: Object.values(checks).every(Boolean),
+    summary: buildDiagnosticSummary(issues),
     checks,
     issues,
     nextActions: buildDiagnosticNextActions(issues),
+    primaryAction:
+      issues.length === 0
+        ? buildRecommendedAction({
+            label: 'Check workspace status',
+            reason: 'Runtime checks passed; inspect project initialization and daemon state next.',
+            startsDaemon: false,
+            tool: 'alembic_codex_status',
+          })
+        : buildRecommendedAction({
+            label: 'Fix diagnostics',
+            reason: 'Resolve the reported runtime or plugin metadata issue before using Alembic.',
+            startsDaemon: false,
+            tool: 'alembic_codex_diagnostics',
+          }),
     node: {
       ok: checks.node,
       required: '>=22',
@@ -640,6 +727,133 @@ function buildRuntimeDiagnostics(daemonStatus: DaemonStatus): Record<string, unk
       defaultMode: 'dry-run',
     },
   };
+}
+
+function buildStatusOnboarding(input: {
+  daemonStatus: DaemonStatus;
+  diagnostics: Record<string, unknown>;
+  initialized: boolean;
+}): Record<string, unknown> {
+  const diagnosticsOk = input.diagnostics.ok !== false;
+  if (!diagnosticsOk) {
+    return {
+      state: 'runtime_issue',
+      summary:
+        'Alembic Codex is installed, but runtime diagnostics need attention before project knowledge is reliable.',
+      primaryAction: buildRecommendedAction({
+        label: 'Run diagnostics',
+        reason: 'Resolve Node, npm, package pinning, or plugin metadata issues first.',
+        startsDaemon: false,
+        tool: 'alembic_codex_diagnostics',
+      }),
+      nextActions: [
+        buildRecommendedAction({
+          label: 'Run diagnostics',
+          reason: 'Inspect structured issues and repair guidance.',
+          startsDaemon: false,
+          tool: 'alembic_codex_diagnostics',
+        }),
+      ],
+      notes: ['Status checks do not start the daemon.'],
+    };
+  }
+
+  if (!input.initialized) {
+    return {
+      state: 'needs_init',
+      summary:
+        'Alembic Codex is installed and the runtime is healthy, but this workspace has not been initialized yet.',
+      primaryAction: buildRecommendedAction({
+        label: 'Initialize Ghost workspace',
+        reason: 'Create Alembic Codex data roots without writing IDE MCP files into the project.',
+        startsDaemon: false,
+        tool: 'alembic_codex_init',
+      }),
+      nextActions: [
+        buildRecommendedAction({
+          label: 'Initialize Ghost workspace',
+          reason: 'Set up local Alembic config, database, knowledge, and Recipe directories.',
+          startsDaemon: false,
+          tool: 'alembic_codex_init',
+        }),
+        buildRecommendedAction({
+          label: 'Open Dashboard',
+          reason: 'Start the daemon only when you want the Dashboard or background jobs.',
+          startsDaemon: true,
+          tool: 'alembic_codex_dashboard',
+        }),
+      ],
+      notes: ['Ghost mode keeps Alembic data outside the repository by default.'],
+    };
+  }
+
+  const daemonReady = input.daemonStatus.ready === true;
+  return {
+    state: daemonReady ? 'ready_daemon_running' : 'ready',
+    summary: daemonReady
+      ? 'Alembic Codex is initialized and the daemon is ready.'
+      : 'Alembic Codex is initialized. The daemon will start on demand when a project-knowledge tool needs it.',
+    primaryAction: buildRecommendedAction({
+      arguments: { operation: 'prime' },
+      label: 'Prime Codex',
+      reason: 'Load relevant Alembic Recipes before non-trivial coding work.',
+      startsDaemon: !daemonReady,
+      tool: 'alembic_task',
+    }),
+    nextActions: [
+      buildRecommendedAction({
+        arguments: { operation: 'prime' },
+        label: 'Prime Codex',
+        reason: 'Load project conventions and active task context.',
+        startsDaemon: !daemonReady,
+        tool: 'alembic_task',
+      }),
+      buildRecommendedAction({
+        label: 'Start bootstrap',
+        reason: 'Build or refresh project knowledge in a recoverable background job.',
+        startsDaemon: !daemonReady,
+        tool: 'alembic_codex_bootstrap',
+      }),
+      buildRecommendedAction({
+        label: 'Open Dashboard',
+        reason: 'Inspect jobs, candidates, and project knowledge in the local UI.',
+        startsDaemon: !daemonReady,
+        tool: 'alembic_codex_dashboard',
+      }),
+    ],
+    notes: daemonReady
+      ? ['Dashboard and job APIs are available now.']
+      : ['Status checks stay light; project-knowledge tools wake the daemon only when needed.'],
+  };
+}
+
+function buildRecommendedAction(input: {
+  arguments?: Record<string, unknown>;
+  label: string;
+  reason: string;
+  startsDaemon: boolean;
+  tool: string;
+}): CodexRecommendedAction {
+  return {
+    arguments: input.arguments || {},
+    label: input.label,
+    reason: input.reason,
+    startsDaemon: input.startsDaemon,
+    tool: input.tool,
+  };
+}
+
+function buildActionLabels(actions: unknown): string[] {
+  return Array.isArray(actions)
+    ? actions
+        .map((action) => asPlainRecord(action))
+        .map((action) =>
+          action && typeof action.tool === 'string' && typeof action.label === 'string'
+            ? `${action.label}: call ${action.tool}`
+            : null
+        )
+        .filter((value): value is string => Boolean(value))
+    : [];
 }
 
 interface PluginDiagnostics {
@@ -826,6 +1040,22 @@ function buildDiagnosticNextActions(issues: DiagnosticIssue[]): string[] {
     return ['Alembic Codex runtime checks passed.'];
   }
   return [...new Set(issues.map((issue) => issue.action))];
+}
+
+function buildDiagnosticSummary(issues: DiagnosticIssue[]): string {
+  if (issues.length === 0) {
+    return 'Alembic Codex runtime checks passed. Continue with status, init, bootstrap, or priming.';
+  }
+  const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+  const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
+  const parts = [];
+  if (errorCount > 0) {
+    parts.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
+  }
+  if (warningCount > 0) {
+    parts.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
+  }
+  return `Alembic Codex diagnostics found ${parts.join(' and ')}. Review issues before starting project knowledge workflows.`;
 }
 
 function collectManifestAssetPaths(manifestInterface: Record<string, unknown> | null): string[] {

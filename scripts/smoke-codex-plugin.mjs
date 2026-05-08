@@ -113,6 +113,10 @@ try {
     'diagnostics package pin mismatch'
   );
   assert(diagnostics.data?.plugin?.ok === true, 'diagnostics plugin checks did not pass');
+  assert(
+    diagnostics.data?.primaryAction?.tool === 'alembic_codex_status',
+    'diagnostics should point healthy installs to status'
+  );
 
   const beforeStatus = await server.handleToolCall('alembic_codex_status', {});
   assertResult(beforeStatus, 'status before init');
@@ -120,15 +124,31 @@ try {
     beforeStatus.data?.initialized === false,
     'fresh smoke workspace should start uninitialized'
   );
+  assert(
+    beforeStatus.data?.onboarding?.state === 'needs_init',
+    'fresh smoke workspace should recommend initialization'
+  );
+  assert(
+    beforeStatus.data?.onboarding?.primaryAction?.tool === 'alembic_codex_init',
+    'fresh smoke workspace should point to codex init'
+  );
 
   const init = await server.handleToolCall('alembic_codex_init', {});
   assertResult(init, 'codex init');
   assert(init.data?.status?.initialized === true, 'codex init did not produce initialized status');
+  assert(
+    init.data?.nextActions?.some((action) => action?.tool === 'alembic_codex_bootstrap'),
+    'codex init should recommend bootstrap'
+  );
 
   const afterStatus = await server.handleToolCall('alembic_codex_status', {});
   assertResult(afterStatus, 'status after init');
   assert(afterStatus.data?.initialized === true, 'status after init should be initialized');
   assert(afterStatus.data?.workspace?.ghost === true, 'codex init should default to Ghost mode');
+  assert(
+    afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_task',
+    'initialized workspace should recommend priming Codex'
+  );
 
   const store = new JobStore({ projectRoot });
   const localJob = store.create({ kind: 'rescan', request: { reason: 'smoke' }, source: 'codex' });
@@ -397,12 +417,20 @@ async function runStdioSmoke({ packageJson, packageRoot, projectRoot, alembicHom
       diagnostics.data?.plugin?.ok === true,
       'MCP stdio diagnostics plugin checks did not pass'
     );
+    assert(
+      diagnostics.data?.primaryAction?.tool === 'alembic_codex_status',
+      'MCP stdio diagnostics should point healthy installs to status'
+    );
 
     const beforeStatus = await callStdioJsonTool(client, 'alembic_codex_status', {}, stderr);
     assertResult(beforeStatus, 'MCP stdio status before init');
     assert(
       beforeStatus.data?.initialized === false,
       'MCP stdio fresh workspace should start uninitialized'
+    );
+    assert(
+      beforeStatus.data?.onboarding?.primaryAction?.tool === 'alembic_codex_init',
+      'MCP stdio fresh workspace should point to codex init'
     );
 
     const init = await callStdioJsonTool(client, 'alembic_codex_init', {}, stderr);
@@ -421,6 +449,10 @@ async function runStdioSmoke({ packageJson, packageRoot, projectRoot, alembicHom
     assert(
       afterStatus.data?.workspace?.ghost === true,
       'MCP stdio codex init should default to Ghost mode'
+    );
+    assert(
+      afterStatus.data?.onboarding?.primaryAction?.tool === 'alembic_task',
+      'MCP stdio initialized workspace should recommend priming Codex'
     );
 
     const jobs = await callStdioJsonTool(client, 'alembic_codex_job', { limit: 5 }, stderr);

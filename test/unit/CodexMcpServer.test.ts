@@ -149,6 +149,11 @@ describe('CodexMcpServer', () => {
         initialized: boolean;
         daemon: { ready: boolean };
         diagnostics: { node: { ok: boolean } };
+        nextActions: string[];
+        onboarding: {
+          primaryAction: { startsDaemon: boolean; tool: string };
+          state: string;
+        };
       };
     };
 
@@ -156,6 +161,13 @@ describe('CodexMcpServer', () => {
     expect(result.data.initialized).toBe(false);
     expect(result.data.daemon.ready).toBe(false);
     expect(result.data.diagnostics.node.ok).toBe(true);
+    expect(result.data.onboarding).toMatchObject({
+      state: 'needs_init',
+      primaryAction: { startsDaemon: false, tool: 'alembic_codex_init' },
+    });
+    expect(result.data.nextActions).toContain(
+      'Initialize Ghost workspace: call alembic_codex_init'
+    );
     expect(supervisor.status).toHaveBeenCalledTimes(1);
     expect(supervisor.ensure).not.toHaveBeenCalled();
   });
@@ -182,6 +194,8 @@ describe('CodexMcpServer', () => {
         offlineFallback: { globalInstall: string };
         package: { pinnedSpecifier: string; version: string };
         plugin: { mcp: { ok: boolean; packagePin: boolean }; skills: { ok: boolean } };
+        primaryAction: { tool: string };
+        summary: string;
       };
     };
 
@@ -195,6 +209,8 @@ describe('CodexMcpServer', () => {
     expect(result.data.plugin.mcp).toMatchObject({ ok: true, packagePin: true });
     expect(result.data.plugin.skills.ok).toBe(true);
     expect(result.data.nextActions).toContain('Alembic Codex runtime checks passed.');
+    expect(result.data.primaryAction.tool).toBe('alembic_codex_status');
+    expect(result.data.summary).toContain('runtime checks passed');
     expect(result.data.offlineFallback.globalInstall).toBe(
       `npm install -g alembic-ai@${getPackageVersion()}`
     );
@@ -221,6 +237,8 @@ describe('CodexMcpServer', () => {
         issues: Array<{ code: string }>;
         nextActions: string[];
         ok: boolean;
+        primaryAction: { tool: string };
+        summary: string;
       };
     };
 
@@ -228,6 +246,8 @@ describe('CodexMcpServer', () => {
     expect(result.data.ok).toBe(false);
     expect(result.data.checks.adminGate).toBe(false);
     expect(result.data.issues.map((issue) => issue.code)).toContain('CODEX_ADMIN_OPT_IN_REQUIRED');
+    expect(result.data.primaryAction.tool).toBe('alembic_codex_diagnostics');
+    expect(result.data.summary).toContain('warning');
     expect(result.data.nextActions).toContain(
       'Set ALEMBIC_CODEX_ENABLE_ADMIN=1 only for explicit admin workflows.'
     );
@@ -403,6 +423,12 @@ describe('CodexMcpServer', () => {
     expect(pluginMcp.mcpServers.alembic.args).toContain('--package');
     expect(pluginMcp.mcpServers.alembic.args).toContain(`alembic-ai@${packageJson.version}`);
     expect(pluginMcp.mcpServers.alembic.env.ALEMBIC_CODEX_ENABLE_ADMIN).toBe('0');
+    expect(pluginJson.interface.defaultPrompt).toContain(
+      'Run Alembic Codex first-minute setup guidance for this project'
+    );
+    expect(pluginJson.interface.defaultPrompt).toContain(
+      'Initialize Alembic Codex in Ghost mode for this project'
+    );
     expect(pluginJson.interface.defaultPrompt).toContain(
       'Run Alembic Codex diagnostics for this project'
     );

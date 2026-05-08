@@ -111,7 +111,15 @@ for (const asset of assets) {
 const prompts = Array.isArray(iface.defaultPrompt)
   ? iface.defaultPrompt.join('\n').toLowerCase()
   : '';
-for (const keyword of ['diagnostics', 'status', 'bootstrap', 'prime', 'guard']) {
+for (const keyword of [
+  'first-minute',
+  'diagnostics',
+  'status',
+  'initialize',
+  'bootstrap',
+  'prime',
+  'guard',
+]) {
   expect(prompts.includes(keyword), `default prompts should include ${keyword}`);
 }
 

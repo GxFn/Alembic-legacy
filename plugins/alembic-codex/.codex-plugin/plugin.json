@@ -32,8 +32,10 @@
     ],
     "websiteURL": "https://github.com/GxFn/Alembic#readme",
     "defaultPrompt": [
+      "Run Alembic Codex first-minute setup guidance for this project",
       "Run Alembic Codex diagnostics for this project",
       "Check Alembic Codex status for this project",
+      "Initialize Alembic Codex in Ghost mode for this project",
       "Start an Alembic Codex bootstrap job for this project",
       "Prime Codex with this project's Alembic Recipes",
       "Check my current changes with Alembic Guard"
