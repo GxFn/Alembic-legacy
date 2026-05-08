@@ -96,6 +96,10 @@ for (const keyword of ['codex', 'codex-plugin', 'openai-codex']) {
   );
 }
 expect(server?.command === 'npx', '.mcp.json must launch through npx');
+expect(
+  args.includes('--prefix') && args[args.indexOf('--prefix') + 1] === '/tmp',
+  '.mcp.json must run npx with --prefix /tmp so local repo package.json cannot shadow published bins'
+);
 expect(args.includes('--package'), '.mcp.json npx args must include --package');
 expect(
   pinnedSpecifier === expectedRuntime,

@@ -13,6 +13,7 @@ Use it when you want Codex to:
 
 - Node.js 22 or newer is required. Node 22 LTS is recommended for local development; keep the MCP shim and daemon on the same Node executable.
 - The marketplace MCP config pins the runtime package as `alembic-ai@0.0.10`.
+- The MCP launch command runs `npx` with `--prefix /tmp` so GitHub/local installs inside the Alembic repository cannot shadow the published runtime binaries.
 - The default MCP tier is `agent`; admin tools stay hidden unless both `ALEMBIC_MCP_TIER=admin` and `ALEMBIC_CODEX_ENABLE_ADMIN=1` are set.
 
 ## First Checks
