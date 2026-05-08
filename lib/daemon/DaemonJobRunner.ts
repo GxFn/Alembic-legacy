@@ -120,6 +120,27 @@ export function cancelDaemonJob(options: {
   return job;
 }
 
+export function markInterruptedDaemonJobs(options: {
+  code?: string;
+  container: ServiceContainer;
+  logger: LoggerLike;
+  reason: string;
+}): DaemonJobRecord[] {
+  const store = getJobStore(options.container);
+  const jobs = store.markActiveInterrupted({
+    code: options.code,
+    reason: options.reason,
+  });
+  if (jobs.length > 0) {
+    options.logger.warn('Marked interrupted daemon jobs as failed', {
+      count: jobs.length,
+      jobIds: jobs.map((job) => job.id),
+      reason: options.reason,
+    });
+  }
+  return jobs;
+}
+
 export function getJobStore(container: ServiceContainer): JobStore {
   try {
     return container.get('jobStore');

@@ -14,6 +14,12 @@ Use `alembic_codex_diagnostics` first. It reports Node, npm, npx, package versio
 
 Use `alembic_codex_status` to inspect workspace initialization and daemon state without starting the daemon.
 
+## Long-Running Jobs
+
+`alembic_codex_bootstrap` and `alembic_codex_rescan` return a durable job id immediately. Use `alembic_codex_job` with that id to resume status checks after Codex reconnects or the Dashboard refreshes.
+
+If the Alembic daemon shuts down or restarts before an active job completes, the next daemon lifecycle marks that job as `failed` with an interruption reason instead of leaving it stuck in `queued` or `running`. Start a new bootstrap or rescan job to retry.
+
 ## Release Verification
 
 Before publishing, run:

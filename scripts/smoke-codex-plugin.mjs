@@ -148,13 +148,34 @@ try {
   }
 
   let daemon = null;
+  let recovery = 'skipped';
   if (shouldRunDaemon) {
+    const interruptedJob = store.create({
+      kind: 'bootstrap',
+      request: { reason: 'daemon-recovery-smoke' },
+      source: 'codex',
+    });
+    store.markRunning(interruptedJob.id);
+
     daemon = await server.handleToolCall('alembic_codex_dashboard', {});
     assertResult(daemon, 'dashboard daemon smoke');
     assert(
       typeof daemon.data?.dashboardUrl === 'string',
       'dashboard daemon smoke did not return a URL'
     );
+    const recoveredJob = await server.handleToolCall('alembic_codex_job', {
+      jobId: interruptedJob.id,
+    });
+    assertResult(recoveredJob, 'daemon recovery job lookup');
+    assert(
+      recoveredJob.data?.job?.status === 'failed',
+      'daemon recovery smoke did not fail interrupted job'
+    );
+    assert(
+      recoveredJob.data?.job?.error?.code === 'DAEMON_RESTARTED',
+      'daemon recovery smoke did not record DAEMON_RESTARTED'
+    );
+    recovery = 'passed';
     await server.handleToolCall('alembic_codex_stop', {});
   }
 
@@ -168,6 +189,7 @@ try {
         alembicHome,
         install: 'passed',
         stdio,
+        recovery,
         daemon: shouldRunDaemon ? daemon?.data?.dashboardUrl || null : 'skipped',
       },
       null,

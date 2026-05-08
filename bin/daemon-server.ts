@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { createServer } from 'node:net';
 import { resolve } from 'node:path';
 import Bootstrap from '../lib/bootstrap.js';
+import { markInterruptedDaemonJobs } from '../lib/daemon/DaemonJobRunner.js';
 import {
   DAEMON_STATE_SCHEMA_VERSION,
   getPackageVersion,
@@ -70,6 +71,13 @@ async function main() {
     skillHooks: components.skillHooks,
     projectRoot,
     workspaceResolver: components.workspaceResolver,
+  });
+
+  markInterruptedDaemonJobs({
+    code: 'DAEMON_RESTARTED',
+    container,
+    logger,
+    reason: 'Alembic daemon restarted before this job completed. Start a new job to retry.',
   });
 
   try {
@@ -144,6 +152,14 @@ async function main() {
   shutdown.register(async () => {
     await timerRegistry.dispose();
   }, 'timer-registry');
+  shutdown.register(() => {
+    markInterruptedDaemonJobs({
+      code: 'DAEMON_SHUTDOWN',
+      container,
+      logger,
+      reason: 'Alembic daemon shut down before this job completed. Start a new job to retry.',
+    });
+  }, 'daemon-jobs');
 }
 
 async function startHttpServer(port: number, host: string): Promise<HttpServer> {

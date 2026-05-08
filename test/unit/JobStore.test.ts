@@ -90,4 +90,37 @@ describe('JobStore', () => {
       error: { message: 'user cancelled' },
     });
   });
+
+  test('marks queued and running jobs interrupted without touching terminal jobs', () => {
+    useTempAlembicHome();
+    const store = new JobStore({ projectRoot: makeProjectRoot() });
+    const queued = store.create({ kind: 'bootstrap', source: 'codex' });
+    const running = store.create({ kind: 'rescan', source: 'dashboard' });
+    store.markRunning(running.id);
+    const completed = store.create({ kind: 'bootstrap' });
+    store.markRunning(completed.id);
+    store.complete(completed.id, { ok: true });
+    const cancelled = store.create({ kind: 'rescan' });
+    store.cancel(cancelled.id, 'user cancelled');
+
+    const interrupted = store.markActiveInterrupted({
+      code: 'DAEMON_RESTARTED',
+      reason: 'daemon restarted before completion',
+    });
+
+    expect(interrupted.map((job) => job.id)).toEqual([queued.id, running.id]);
+    expect(store.get(queued.id)).toMatchObject({
+      status: 'failed',
+      error: { code: 'DAEMON_RESTARTED', message: 'daemon restarted before completion' },
+    });
+    expect(store.get(running.id)).toMatchObject({
+      status: 'failed',
+      error: { code: 'DAEMON_RESTARTED', message: 'daemon restarted before completion' },
+    });
+    expect(store.get(completed.id)).toMatchObject({ status: 'completed' });
+    expect(store.get(cancelled.id)).toMatchObject({
+      status: 'cancelled',
+      error: { message: 'user cancelled' },
+    });
+  });
 });

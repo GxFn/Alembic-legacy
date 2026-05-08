@@ -15,6 +15,7 @@ export type DaemonJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'c
 export type DaemonJobSource = 'codex' | 'dashboard' | 'http' | 'system';
 
 export interface DaemonJobError {
+  code?: string;
   message: string;
   stack?: string;
 }
@@ -51,6 +52,11 @@ export interface ListDaemonJobsOptions {
   kind?: DaemonJobKind;
   status?: DaemonJobStatus;
   limit?: number;
+}
+
+export interface MarkActiveJobsInterruptedOptions {
+  code?: string;
+  reason: string;
 }
 
 const JOB_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -174,6 +180,27 @@ export class JobStore {
     });
   }
 
+  markActiveInterrupted(options: MarkActiveJobsInterruptedOptions): DaemonJobRecord[] {
+    const activeJobs = this.#readAll()
+      .filter((job) => job.status === 'queued' || job.status === 'running')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const interrupted: DaemonJobRecord[] = [];
+    for (const job of activeJobs) {
+      const updated = this.update(job.id, {
+        status: 'failed',
+        error: {
+          ...(options.code ? { code: options.code } : {}),
+          message: options.reason,
+        },
+        completedAt: new Date().toISOString(),
+      });
+      if (updated?.status === 'failed') {
+        interrupted.push(updated);
+      }
+    }
+    return interrupted;
+  }
+
   update(id: string, patch: Partial<DaemonJobRecord>): DaemonJobRecord | null {
     const current = this.get(id);
     if (!current) {
@@ -204,6 +231,16 @@ export class JobStore {
 
   #jobPath(id: string): string {
     return join(this.jobsDir, `${id}.json`);
+  }
+
+  #readAll(): DaemonJobRecord[] {
+    if (!existsSync(this.jobsDir)) {
+      return [];
+    }
+    return readdirSync(this.jobsDir)
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => this.get(basename(name, '.json')))
+      .filter((job): job is DaemonJobRecord => Boolean(job));
   }
 
   #write(job: DaemonJobRecord): void {
