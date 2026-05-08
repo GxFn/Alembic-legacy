@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const packageJson = readJson(join(root, 'package.json'));
+const rootReadmePath = join(root, 'README.md');
+const rootReadmeCnPath = join(root, 'README_CN.md');
 const pluginRoot = join(root, 'plugins', 'alembic-codex');
 const pluginJsonPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
 const mcpJsonPath = join(pluginRoot, '.mcp.json');
@@ -66,7 +68,32 @@ expect(
   'package.json must expose release:codex-plugin:daemon'
 );
 expect(pluginJson.name === 'alembic-codex', 'plugin.json name must be alembic-codex');
+expect(
+  pluginJson.description?.includes('Local-first project memory'),
+  'plugin description must describe local-first project memory'
+);
 expect(pluginJson.interface?.displayName === 'Alembic', 'plugin displayName must be Alembic');
+expect(
+  pluginJson.interface?.shortDescription?.includes('Local project memory'),
+  'plugin shortDescription must describe local project memory'
+);
+expect(
+  pluginJson.interface?.longDescription?.includes('Ghost mode') &&
+    pluginJson.interface?.longDescription?.includes('wakes the Alembic daemon'),
+  'plugin longDescription must explain Ghost mode and on-demand daemon startup'
+);
+for (const keyword of ['codex', 'codex-plugin', 'local-first', 'dashboard', 'bootstrap']) {
+  expect(
+    Array.isArray(pluginJson.keywords) && pluginJson.keywords.includes(keyword),
+    `plugin keywords must include ${keyword}`
+  );
+}
+for (const keyword of ['codex', 'codex-plugin', 'openai-codex']) {
+  expect(
+    Array.isArray(packageJson.keywords) && packageJson.keywords.includes(keyword),
+    `package keywords must include ${keyword}`
+  );
+}
 expect(server?.command === 'npx', '.mcp.json must launch through npx');
 expect(args.includes('--package'), '.mcp.json npx args must include --package');
 expect(
@@ -153,12 +180,28 @@ for (const skill of [
 }
 
 const readme = existsSync(readmePath) ? readFileSync(readmePath, 'utf8') : '';
+const rootReadme = existsSync(rootReadmePath) ? readFileSync(rootReadmePath, 'utf8') : '';
+const rootReadmeCn = existsSync(rootReadmeCnPath) ? readFileSync(rootReadmeCnPath, 'utf8') : '';
 expect(readme.includes(expectedRuntime), `README.md must mention ${expectedRuntime}`);
 expect(
   readme.includes('alembic_codex_diagnostics'),
   'README.md must document alembic_codex_diagnostics'
 );
 expect(readme.includes('alembic_codex_cleanup'), 'README.md must document cleanup policy');
+expect(
+  readme.includes('Use it when you want Codex to:'),
+  'plugin README must include product-facing use cases'
+);
+expect(rootReadme.includes('## Codex Plugin'), 'root README must document Codex Plugin');
+expect(
+  rootReadme.includes('npm run release:codex-plugin'),
+  'root README must document Codex plugin release check'
+);
+expect(rootReadmeCn.includes('## Codex 插件'), 'Chinese README must document Codex plugin');
+expect(
+  rootReadmeCn.includes('npm run release:codex-plugin'),
+  'Chinese README must document Codex plugin release check'
+);
 
 if (errors.length > 0) {
   console.error('Codex plugin verification failed:');

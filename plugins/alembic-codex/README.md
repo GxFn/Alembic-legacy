@@ -1,6 +1,13 @@
 # Alembic Codex Plugin
 
-Alembic for Codex uses a lightweight MCP shim. The shim can report local status and diagnostics without initializing the database, then starts or connects to the per-workspace daemon only when project knowledge, Guard, Dashboard, bootstrap, or rescan work is requested.
+Alembic for Codex gives Codex local project memory without turning every chat into a setup session. It starts with a lightweight MCP shim, reports diagnostics and workspace status without initializing the database, initializes in Ghost mode by default, then starts or connects to the per-workspace daemon only when project knowledge, Guard, Dashboard, bootstrap, or rescan work is requested.
+
+Use it when you want Codex to:
+
+- Prime itself with project Recipes before coding.
+- Run Guard checks against the current change.
+- Build or refresh project knowledge through recoverable daemon jobs.
+- Open the local Dashboard only when a visual handoff is useful.
 
 ## Runtime
 
