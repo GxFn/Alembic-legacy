@@ -121,7 +121,9 @@ export class DatabaseConnection {
         .get(version);
 
       if (!applied) {
-        process.stderr.write(`Applying migration: ${version}\n`);
+        if (process.env.ALEMBIC_QUIET !== '1') {
+          process.stderr.write(`Applying migration: ${version}\n`);
+        }
 
         if (file.endsWith('.js') || file.endsWith('.ts')) {
           // JS migration: export default function(db) { ... }
@@ -145,7 +147,9 @@ export class DatabaseConnection {
           runMigration();
         }
 
-        process.stderr.write(`✅ Migration ${version} applied\n`);
+        if (process.env.ALEMBIC_QUIET !== '1') {
+          process.stderr.write(`✅ Migration ${version} applied\n`);
+        }
       }
     }
   }

@@ -5,6 +5,9 @@
  *
  * Usage:
  *   alembic setup           - 初始化项目（--repo 指定子仓库远程地址）
+ *   alembic codex init      - Codex 插件模式初始化（默认 Ghost）
+ *   alembic codex status    - Codex 插件模式状态检查
+ *   alembic daemon start    - 启动 Alembic daemon（动态端口 + state 文件）
  *   alembic remote <url>    - 将 recipes 目录转为独立子仓库并关联远程仓库
  *   alembic coldstart       - 冷启动知识库（9 维度分析 + AI 填充）
  *   alembic rescan          - 增量知识更新（保留 Recipe，重新扫描）
@@ -76,6 +79,7 @@ program
   .option('--force', '强制覆盖已有配置')
   .option('--seed', '预置示例 Recipe（冷启动推荐）')
   .option('--ghost', 'Ghost 模式：零项目侵入，所有数据外置到 ~/.asd/workspaces/')
+  .option('--codex', 'Codex 插件 profile：默认 Ghost，并跳过 Cursor/VS Code 项目文件部署')
   .option('--repo <url>', 'recipes 子仓库的远程 Git 仓库地址（提供则 clone，不提供则为普通目录）')
   .action(async (opts) => {
     const { SetupService } = await import('../lib/cli/SetupService.js');
@@ -83,12 +87,147 @@ program
       projectRoot: resolve(opts.dir),
       force: opts.force,
       seed: opts.seed,
-      ghost: opts.ghost,
+      ghost: opts.codex ? true : opts.ghost,
+      profile: opts.codex ? 'codex-plugin' : 'full-ide',
       subRepoUrl: opts.repo,
     });
 
     await service.run();
     service.printSummary();
+  });
+
+// ─────────────────────────────────────────────────────
+// codex 命令 — Codex 插件模式辅助入口
+// ─────────────────────────────────────────────────────
+const codex = program.command('codex').description('Codex 插件模式辅助命令');
+
+codex
+  .command('init')
+  .description('以 Codex 插件 profile 初始化 Alembic（默认 Ghost，零项目侵入）')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--force', '强制覆盖已有配置')
+  .option('--seed', '预置示例 Recipe')
+  .option('--repo <url>', 'recipes 子仓库的远程 Git 仓库地址')
+  .option('--standard', '写入项目目录而不是 Ghost dataRoot（不推荐用于市场插件）')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const { SetupService } = await import('../lib/cli/SetupService.js');
+    const projectRoot = resolve(opts.dir);
+    const service = new SetupService({
+      projectRoot,
+      force: opts.force,
+      seed: opts.seed,
+      ghost: !opts.standard,
+      profile: 'codex-plugin',
+      quiet: opts.json,
+      subRepoUrl: opts.repo,
+    });
+
+    const results = await service.run();
+    const status = await buildCodexStatus(projectRoot);
+    const ok = results.every((r) => r.ok);
+
+    if (opts.json) {
+      cli.json({
+        ok,
+        profile: 'codex-plugin',
+        results,
+        status,
+      });
+    } else {
+      service.printSummary();
+      printCodexStatus(status);
+    }
+
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+codex
+  .command('status')
+  .description('检查 Codex 插件模式的 Alembic 工作区状态')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const status = await buildCodexStatus(resolve(opts.dir));
+    if (opts.json) {
+      cli.json(status);
+      return;
+    }
+    printCodexStatus(status);
+  });
+
+// ─────────────────────────────────────────────────────
+// daemon 命令 — Codex/插件模式后台服务
+// ─────────────────────────────────────────────────────
+const daemon = program.command('daemon').description('管理 Alembic daemon 后台服务');
+
+daemon
+  .command('start')
+  .description('启动当前项目的 Alembic daemon（默认动态端口）')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('-p, --port <port>', '端口；0 表示动态分配', '0')
+  .option('-H, --host <host>', '绑定地址', '127.0.0.1')
+  .option('--restart', '即使 daemon 已就绪也重启')
+  .option('--wait <ms>', '等待 ready 的毫秒数', '10000')
+  .option('--no-open', '不打开 Dashboard（P3 默认不会自动打开）')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const { DaemonSupervisor } = await import('../lib/daemon/DaemonSupervisor.js');
+    const supervisor = new DaemonSupervisor();
+    const result = await supervisor.start({
+      projectRoot: resolve(opts.dir),
+      host: opts.host,
+      port: parseCliInteger(opts.port, 'port'),
+      restart: Boolean(opts.restart),
+      waitUntilReadyMs: parseCliInteger(opts.wait, 'wait'),
+    });
+
+    if (opts.json) {
+      cli.json(result);
+    } else {
+      printDaemonStatus(result);
+    }
+    if (!result.ready) {
+      process.exitCode = 1;
+    }
+  });
+
+daemon
+  .command('status')
+  .description('检查当前项目 daemon 状态')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const { DaemonSupervisor } = await import('../lib/daemon/DaemonSupervisor.js');
+    const supervisor = new DaemonSupervisor();
+    const result = await supervisor.status(resolve(opts.dir));
+    if (opts.json) {
+      cli.json(result);
+      return;
+    }
+    printDaemonStatus(result);
+  });
+
+daemon
+  .command('stop')
+  .description('停止当前项目 daemon')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--wait <ms>', '等待停止的毫秒数', '5000')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const { DaemonSupervisor } = await import('../lib/daemon/DaemonSupervisor.js');
+    const supervisor = new DaemonSupervisor();
+    const result = await supervisor.stop({
+      projectRoot: resolve(opts.dir),
+      waitMs: parseCliInteger(opts.wait, 'wait'),
+    });
+    if (opts.json) {
+      cli.json(result);
+      return;
+    }
+    printDaemonStatus(result);
   });
 
 // ─────────────────────────────────────────────────────
@@ -1154,9 +1293,9 @@ program
 
     // 项目根目录：-d 选项 > 环境变量 ALEMBIC_CWD > 当前目录
     const projectRoot = opts.dir || process.env.ALEMBIC_CWD || process.cwd();
-    const port = opts.port;
+    const port = parseCliInteger(opts.port, 'port');
     const host = '127.0.0.1';
-    process.env.PORT = port;
+    process.env.PORT = String(port);
     process.env.HOST = host;
 
     let httpServer;
@@ -2017,6 +2156,201 @@ async function initContainer(opts: any = {}) {
     workspaceResolver: bootstrap.components.workspaceResolver,
   });
   return { bootstrap, container };
+}
+
+async function buildCodexStatus(projectRootInput: string) {
+  const projectRoot = resolve(projectRootInput);
+  const resolver = WorkspaceResolver.fromProject(projectRoot);
+  const facts = resolver.toFacts();
+
+  const configPath = resolver.configPath;
+  const databasePath = resolver.databasePath;
+  const envPath = join(resolver.dataRoot, '.env');
+  const daemonStatePath = join(resolver.runtimeDir, 'daemon.json');
+  const daemonPidPath = join(resolver.runtimeDir, 'daemon.pid');
+  const { DaemonSupervisor } = await import('../lib/daemon/DaemonSupervisor.js');
+  const daemonStatus = await new DaemonSupervisor().status(projectRoot);
+
+  const runtimeExists = existsSync(resolver.runtimeDir);
+  const configExists = existsSync(configPath);
+  const databaseExists = existsSync(databasePath);
+  const knowledgeExists = existsSync(resolver.knowledgeDir);
+  const recipesExists = existsSync(resolver.recipesDir);
+  const envExists = existsSync(envPath);
+  const daemonState = daemonStatus.state || readJsonIfExists(daemonStatePath);
+
+  const projectArtifacts = {
+    runtimeDir: join(projectRoot, DEFAULT_FOLDER_NAMES.project.runtime),
+    runtimeExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.project.runtime)),
+    knowledgeDir: join(projectRoot, DEFAULT_FOLDER_NAMES.project.knowledgeBase),
+    knowledgeExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.project.knowledgeBase)),
+    envPath: join(projectRoot, '.env'),
+    envExists: existsSync(join(projectRoot, '.env')),
+    cursorDir: join(projectRoot, DEFAULT_FOLDER_NAMES.ide.cursorRoot),
+    cursorDirExists: existsSync(join(projectRoot, DEFAULT_FOLDER_NAMES.ide.cursorRoot)),
+    vscodeMcpPath: join(projectRoot, '.vscode', 'mcp.json'),
+    vscodeMcpExists: existsSync(join(projectRoot, '.vscode', 'mcp.json')),
+  };
+
+  const initialized = configExists && databaseExists && knowledgeExists && recipesExists;
+  const nextActions = initialized
+    ? [
+        'Use the Alembic Codex plugin skill and call alembic_health.',
+        'Call alembic_task(operation=prime) before non-trivial coding tasks.',
+      ]
+    : [`Run alembic codex init --dir ${projectRoot}.`];
+
+  return {
+    ok: initialized,
+    packageVersion: pkg.version,
+    profile: 'codex-plugin',
+    initialized,
+    projectRoot,
+    registry: {
+      registered: facts.registered,
+      path: facts.registryPath,
+      projectId: facts.projectId,
+      expectedProjectId: facts.expectedProjectId,
+    },
+    workspace: {
+      mode: facts.mode,
+      ghost: facts.ghost,
+      dataRoot: facts.dataRoot,
+      dataRootSource: facts.dataRootSource,
+      workspaceExists: facts.workspaceExists,
+      runtimeDir: resolver.runtimeDir,
+      runtimeExists,
+      configPath,
+      configExists,
+      databasePath,
+      databaseExists,
+      envPath,
+      envExists,
+      knowledgeDir: resolver.knowledgeDir,
+      knowledgeExists,
+      recipesDir: resolver.recipesDir,
+      recipesExists,
+      candidatesDir: resolver.candidatesDir,
+      skillsDir: resolver.skillsDir,
+      wikiDir: resolver.wikiDir,
+    },
+    projectArtifacts,
+    mcp: {
+      runtimeCommand: 'alembic-codex-mcp',
+      tier: process.env.ALEMBIC_MCP_TIER || 'agent',
+      requiresProjectEnv: null,
+    },
+    daemon: {
+      implemented: true,
+      status: daemonStatus.status,
+      ready: daemonStatus.ready,
+      statePath: daemonStatePath,
+      stateExists: existsSync(daemonStatePath),
+      pidPath: daemonPidPath,
+      pidExists: existsSync(daemonPidPath),
+      pidAlive: daemonStatus.pidAlive,
+      health: daemonStatus.health,
+      state: daemonState,
+    },
+    nextActions,
+  };
+}
+
+function readJsonIfExists(filePath: string): unknown | null {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function printCodexStatus(status: Awaited<ReturnType<typeof buildCodexStatus>>) {
+  cli.log('');
+  cli.log('  Alembic Codex Status');
+  cli.log(`  ${'─'.repeat(40)}`);
+  cli.log(`  Initialized: ${status.initialized ? 'yes' : 'no'}`);
+  cli.log(`  Profile:     ${status.profile}`);
+  cli.log(`  Version:     ${status.packageVersion}`);
+  cli.log(`  Project:     ${status.projectRoot}`);
+  cli.log(
+    `  Workspace:   ${status.workspace.ghost ? 'Ghost' : 'Standard'} (${status.workspace.dataRoot})`
+  );
+  cli.log(
+    `  Runtime:     ${status.workspace.runtimeExists ? status.workspace.runtimeDir : 'missing'}`
+  );
+  cli.log(
+    `  Database:    ${status.workspace.databaseExists ? status.workspace.databasePath : 'missing'}`
+  );
+  cli.log(
+    `  Knowledge:   ${status.workspace.knowledgeExists ? status.workspace.knowledgeDir : 'missing'}`
+  );
+  cli.log(
+    `  Daemon:      ${status.daemon.ready ? 'ready' : status.daemon.status || 'not running'}`
+  );
+
+  if (status.workspace.ghost) {
+    const artifacts = status.projectArtifacts;
+    const polluted =
+      artifacts.runtimeExists ||
+      artifacts.knowledgeExists ||
+      artifacts.envExists ||
+      artifacts.cursorDirExists ||
+      artifacts.vscodeMcpExists;
+    cli.log(`  Project IO:  ${polluted ? 'project artifacts detected' : 'zero project artifacts'}`);
+  }
+
+  if (status.nextActions.length > 0) {
+    cli.log('');
+    cli.log('  Next:');
+    for (const action of status.nextActions) {
+      cli.log(`    - ${action}`);
+    }
+  }
+  cli.blank();
+}
+
+function parseCliInteger(value: string | number, label: string): number {
+  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
+  return parsed;
+}
+
+function printDaemonStatus(status: {
+  dataRoot: string;
+  logPath: string;
+  message?: string;
+  pidAlive: boolean;
+  projectRoot: string;
+  ready: boolean;
+  state: { dashboardUrl?: string; pid?: number; port?: number; url?: string } | null;
+  statePath: string;
+  status: string;
+}) {
+  cli.log('');
+  cli.log('  Alembic Daemon');
+  cli.log(`  ${'─'.repeat(40)}`);
+  cli.log(`  Status:   ${status.status}${status.ready ? ' (ready)' : ''}`);
+  cli.log(`  Project:  ${status.projectRoot}`);
+  cli.log(`  DataRoot: ${status.dataRoot}`);
+  cli.log(`  State:    ${status.statePath}`);
+  cli.log(`  Log:      ${status.logPath}`);
+  if (status.state) {
+    cli.log(`  PID:      ${status.state.pid ?? 'unknown'} (${status.pidAlive ? 'alive' : 'dead'})`);
+    cli.log(`  Port:     ${status.state.port ?? 'unknown'}`);
+    cli.log(`  URL:      ${status.state.url ?? 'unknown'}`);
+    cli.log(
+      `  Dashboard:${status.state.dashboardUrl ? ` ${status.state.dashboardUrl}` : ' unknown'}`
+    );
+  }
+  if (status.message) {
+    cli.log(`  Message:  ${status.message}`);
+  }
+  cli.blank();
 }
 
 // ─────────────────────────────────────────────────────

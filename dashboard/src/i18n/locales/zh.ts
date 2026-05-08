@@ -53,6 +53,7 @@ export const zh = {
     guard: '代码审计',
     panorama: '全景分析',
     skills: 'Skills',
+    jobs: '后台任务',
     repoWiki: 'Wiki',
     signals: '信号中心',
     aiAssistant: 'AI 助手',

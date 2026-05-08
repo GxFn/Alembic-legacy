@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "alembic": {
+      "command": "npx",
+      "args": ["-y", "--package", "alembic-ai@0.0.9", "alembic-codex-mcp"],
+      "env": {
+        "ALEMBIC_CODEX_ENABLE_ADMIN": "0",
+        "ALEMBIC_MCP_TIER": "agent"
+      }
+    }
+  }
+}

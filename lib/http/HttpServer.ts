@@ -4,7 +4,7 @@
  * 集成监控、缓存和错误追踪
  */
 
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import cors from 'cors';
 import express, { type Application, type NextFunction, type Request, type Response } from 'express';
@@ -28,6 +28,7 @@ import auditRouter from './routes/audit.js';
 import authRouter from './routes/auth.js';
 import candidatesRouter from './routes/candidates.js';
 import commandsRouter from './routes/commands.js';
+import daemonRouter from './routes/daemon.js';
 import evolutionRouter from './routes/evolution.js';
 import extractRouter from './routes/extract.js';
 import fileChangesRouter from './routes/file-changes.js';
@@ -35,8 +36,10 @@ import guardRouter from './routes/guard.js';
 import guardReportRouter from './routes/guardReport.js';
 import guardRuleRouter from './routes/guardRules.js';
 import healthRouter from './routes/health.js';
+import jobsRouter from './routes/jobs.js';
 import knowledgeRouter from './routes/knowledge.js';
 import logsRouter from './routes/logs.js';
+import mcpRouter from './routes/mcp.js';
 import modulesRouter from './routes/modules.js';
 import monitoringRouter from './routes/monitoring.js';
 import panoramaRouter from './routes/panorama.js';
@@ -76,7 +79,7 @@ export class HttpServer {
   server: Server | null;
   constructor(config: Partial<HttpServerConfig> = {}) {
     this.config = {
-      port: config.port || 3000,
+      port: config.port ?? 3000,
       host: config.host || 'localhost',
       enableMonitoring: config.enableMonitoring !== false,
       cacheMode: 'memory',
@@ -262,6 +265,15 @@ export class HttpServer {
     // 健康检查
     this.app.use(`${apiPrefix}/health`, healthRouter);
 
+    // daemon 自检端点（供 DaemonSupervisor 校验 project/data/schema identity）
+    this.app.use(`${apiPrefix}/daemon`, daemonRouter);
+
+    // 本地 MCP bridge（供轻量 Codex MCP shim 转发工具调用）
+    this.app.use(`${apiPrefix}/mcp`, mcpRouter);
+
+    // daemon job 状态与投递（Codex 断开后可恢复 job 状态）
+    this.app.use(`${apiPrefix}/jobs`, jobsRouter);
+
     // 认证路由
     this.app.use(`${apiPrefix}/auth`, authRouter);
 
@@ -386,9 +398,41 @@ export class HttpServer {
 
   /** 启动服务器 */
   async start() {
-    const { promise, resolve, reject } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers<Server>();
     try {
-      this.server = this.app.listen(this.config.port, this.config.host, () => {
+      this.server = createServer(this.app);
+      let settled = false;
+
+      const onError = (error: NodeJS.ErrnoException) => {
+        if (settled) {
+          this.logger.error('HTTP Server error', {
+            error: error.message,
+            code: error.code,
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+        settled = true;
+        this.logger.error('HTTP Server error', {
+          error: error.message,
+          code: error.code,
+          timestamp: new Date().toISOString(),
+        });
+        this.server = null;
+        reject(error);
+      };
+
+      const onListening = () => {
+        const address = this.server?.address();
+        if (!address || typeof address !== 'object' || address.port <= 0) {
+          const error = new Error(
+            `HTTP Server did not bind to a valid port: ${JSON.stringify(address)}`
+          );
+          onError(error as NodeJS.ErrnoException);
+          return;
+        }
+        this.config.port = address.port;
+
         this.logger.info('HTTP Server started', {
           host: this.config.host,
           port: this.config.port,
@@ -454,17 +498,13 @@ export class HttpServer {
           });
         }
 
-        resolve(this.server);
-      });
+        settled = true;
+        resolve(this.server!);
+      };
 
-      this.server.on('error', (error: NodeJS.ErrnoException) => {
-        this.logger.error('HTTP Server error', {
-          error: error.message,
-          code: error.code,
-          timestamp: new Date().toISOString(),
-        });
-        reject(error);
-      });
+      this.server.on('error', onError);
+      this.server.once('listening', onListening);
+      this.server.listen(this.config.port, this.config.host);
     } catch (error: unknown) {
       this.logger.error('Failed to start HTTP Server', {
         error: (error as Error).message,

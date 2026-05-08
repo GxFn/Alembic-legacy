@@ -73,7 +73,7 @@
     "build": "tsc",
     "build:check": "tsc --noEmit",
     "postbuild": "node scripts/postbuild.mjs",
-    "prepublishOnly": "npm run build && npm run build:dashboard",
+    "prepublishOnly": "npm run build && npm run build:dashboard && npm run verify:codex-plugin",
     "build:screenshot": "swiftc -O -framework ScreenCaptureKit -framework AppKit resources/native-ui/screenshot.swift -o resources/native-ui/screenshot",
     "install:vscode-ext": "npm ci --prefix resources/vscode-ext",
     "install:cursor-skill": "node dist/scripts/install-cursor-skill.js",
@@ -100,6 +100,7 @@
     "cli": "node dist/bin/cli.js",
     "mcp": "node dist/bin/mcp-server.js",
     "diagnose:mcp": "node dist/scripts/diagnose-mcp.js",
+    "verify:codex-plugin": "node scripts/verify-codex-plugin.mjs",
     "lint": "biome check lib/ bin/ config/ scripts/",
     "lint:fix": "biome check --fix lib/ bin/ config/ scripts/",
     "lint:repo-boundary": "node scripts/lint-repo-boundary.mjs",
@@ -112,7 +113,8 @@
   "license": "MIT",
   "bin": {
     "alembic": "dist/bin/cli.js",
-    "alembic-mcp": "dist/bin/mcp-server.js"
+    "alembic-mcp": "dist/bin/mcp-server.js",
+    "alembic-codex-mcp": "dist/bin/codex-mcp.js"
   },
   "keywords": [
     "knowledge-base",
@@ -170,6 +172,7 @@
     "config",
     "scripts/postbuild.mjs",
     "injectable-skills",
+    "plugins",
     "templates",
     "dashboard/dist",
     "template.json",

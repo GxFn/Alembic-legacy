@@ -16,6 +16,7 @@ import {
   ScanTargetBody,
 } from '#shared/schemas/http-requests.js';
 import { DASHBOARD_OPERATION_IDS } from '#tools/adapters/DashboardOperations.js';
+import { getJobStore } from '../../daemon/DaemonJobRunner.js';
 import Logger from '../../infrastructure/logging/Logger.js';
 import { getServiceContainer } from '../../injection/ServiceContainer.js';
 import { resolveDataRoot } from '../../shared/resolveProjectRoot.js';
@@ -615,9 +616,12 @@ router.get('/bootstrap/status', async (req: Request, res: Response): Promise<voi
     /* not registered */
   }
   if (!taskManager) {
+    const jobs = getJobStore(container).list({ limit: 10 });
+    const activeJob =
+      jobs.find((job) => job.status === 'running' || job.status === 'queued') || null;
     return void res.json({
       success: true,
-      data: { status: 'idle', message: 'No bootstrap task manager initialized' },
+      data: { status: 'idle', message: 'No bootstrap task manager initialized', activeJob, jobs },
     });
   }
 
@@ -625,9 +629,11 @@ router.get('/bootstrap/status', async (req: Request, res: Response): Promise<voi
   const sessionStatus = taskManager.getSessionStatus();
   const testMode = getTestModeConfig();
   const includeTestMode = testMode.enabled;
+  const jobs = getJobStore(container).list({ limit: 10 });
+  const activeJob = jobs.find((job) => job.status === 'running' || job.status === 'queued') || null;
   res.json({
     success: true,
-    data: { ...sessionStatus, ...(includeTestMode ? { testMode } : {}) },
+    data: { ...sessionStatus, activeJob, jobs, ...(includeTestMode ? { testMode } : {}) },
   });
 });
 

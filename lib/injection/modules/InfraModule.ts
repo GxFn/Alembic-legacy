@@ -11,6 +11,7 @@ import path from 'node:path';
 import { resolveDataRoot, resolveProjectRoot } from '#shared/resolveProjectRoot.js';
 import { KnowledgeSyncService } from '../../cli/KnowledgeSyncService.js';
 import Gateway from '../../core/gateway/Gateway.js';
+import { JobStore } from '../../daemon/JobStore.js';
 import AuditLogger from '../../infrastructure/audit/AuditLogger.js';
 import AuditStore from '../../infrastructure/audit/AuditStore.js';
 import { EventBus } from '../../infrastructure/event/EventBus.js';
@@ -79,6 +80,10 @@ export function register(c: ServiceContainer) {
       eventBus,
       getRealtimeService: getRS,
     } as ConstructorParameters<typeof BootstrapTaskManager>[0]);
+  });
+
+  c.singleton('jobStore', (ct: ServiceContainer) => {
+    return new JobStore({ projectRoot: resolveProjectRoot(ct) });
   });
 
   // ═══ WriteZone ═══

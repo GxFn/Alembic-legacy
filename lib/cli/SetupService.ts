@@ -73,12 +73,17 @@ const REPO_ROOT = PACKAGE_ROOT;
 
 // ─────────────────────────────────────────────────────
 
+export type SetupProfile = 'full-ide' | 'codex-plugin' | 'headless';
+
 export class SetupService {
   force: boolean;
+  profile: SetupProfile;
   projectName: string;
   projectRoot: string;
   /** Ghost 模式：所有数据写到 ~/.asd/workspaces/<id>/ */
   ghost: boolean;
+  /** 静默模式：用于 --json 场景，避免进度输出污染 stdout */
+  quiet: boolean;
   /** WorkspaceResolver — Ghost 模式感知的路径解析 */
   resolver: WorkspaceResolver | null;
   _results: Array<{ step: number; label: string; ok: boolean; error?: string }> | null = null;
@@ -102,6 +107,10 @@ export class SetupService {
     projectRoot: string;
     force?: boolean;
     seed?: boolean;
+    /** 初始化 profile：full-ide 为传统 IDE 交付，codex-plugin 为 Codex 市场插件模式 */
+    profile?: SetupProfile;
+    /** 静默输出（通常用于 JSON CLI） */
+    quiet?: boolean;
     /** Ghost 模式：零项目侵入，数据外置到 ~/.asd/workspaces/ */
     ghost?: boolean;
     /** 自定义子仓库相对路径（默认 'Alembic/recipes'） */
@@ -113,12 +122,15 @@ export class SetupService {
     this.projectName = this.projectRoot.split('/').pop() || '';
     this.force = options.force || false;
     this.seed = options.seed || false;
+    this.profile = options.profile || 'full-ide';
+    this.quiet = options.quiet || false;
     this.subRepoDir = options.subRepoDir || DEFAULT_SUB_REPO_DIR;
     this.subRepoUrl = options.subRepoUrl;
 
-    // Ghost 模式：显式 --ghost 优先；否则自动继承注册表中已有的 Ghost 状态
+    // Ghost 模式：显式配置优先；Codex 插件 profile 默认 Ghost；否则继承注册表状态
     const existingEntry = ProjectRegistry.get(this.projectRoot);
-    this.ghost = options.ghost || (existingEntry?.ghost ?? false);
+    this.ghost =
+      options.ghost ?? (this.profile === 'codex-plugin' ? true : (existingEntry?.ghost ?? false));
 
     // ── 排除项目保护 ──────────────────────────────────
     const exclusion = isExcludedProject(this.projectRoot);
@@ -160,15 +172,20 @@ export class SetupService {
 
   /* ═══ 公共入口 ═══════════════════════════════════════ */
 
-  getSteps() {
-    return [
+  getSteps(): Array<{ label: string; fn: () => unknown | Promise<unknown> }> {
+    const steps: Array<{ label: string; fn: () => unknown | Promise<unknown> }> = [
       { label: '创建运行时目录与配置', fn: () => this.stepRuntime() },
       { label: '初始化知识库与 recipes 子仓库', fn: () => this.stepCoreRepo() },
-      { label: '配置 IDE 集成', fn: () => this.stepIDE() },
       { label: '初始化数据库', fn: () => this.stepDatabase() },
       { label: '平台相关初始化', fn: () => this.stepPlatform() },
       { label: '初始化向量索引', fn: () => this.stepVectorIndex() },
     ];
+
+    if (this.profile === 'full-ide') {
+      steps.splice(2, 0, { label: '配置 IDE 集成', fn: () => this.stepIDE() });
+    }
+
+    return steps;
   }
 
   async run() {
@@ -179,13 +196,18 @@ export class SetupService {
     for (let i = 0; i < total; i++) {
       const { label, fn } = steps[i];
       const tag = `[${i + 1}/${total}]`;
-      process.stdout.write(`  ${tag} ${label}...`);
+      if (!this.quiet) {
+        process.stdout.write(`  ${tag} ${label}...`);
+      }
       try {
         const r = await fn();
-        const _detail = this._formatStepDetail(r);
-        results.push({ step: i + 1, label, ok: true, ...(r || {}) });
+        const stepResult = r && typeof r === 'object' ? (r as Record<string, unknown>) : undefined;
+        const _detail = this._formatStepDetail(stepResult);
+        results.push({ step: i + 1, label, ok: true, ...(stepResult || {}) });
       } catch (err: unknown) {
-        console.error(`       ${(err as Error).message}`);
+        if (!this.quiet) {
+          console.error(`       ${(err as Error).message}`);
+        }
         results.push({ step: i + 1, label, ok: false, error: (err as Error).message });
       }
     }
@@ -213,6 +235,9 @@ export class SetupService {
   }
 
   printSummary() {
+    if (this.quiet) {
+      return;
+    }
     const results = this._results || [];
     const ok = results.filter((r) => r.ok).length;
     const fail = results.filter((r) => !r.ok).length;
@@ -228,9 +253,15 @@ export class SetupService {
     }
     console.log('');
     console.log('  下一步：');
-    console.log('    1. 运行 alembic ui 启动后台服务');
-    console.log('    2. 打开 IDE Agent Mode，告诉它「帮我冷启动」');
-    console.log('    3. 所有分析和知识提取都通过 IDE 完成，无需额外配置');
+    if (this.profile === 'codex-plugin') {
+      console.log('    1. 在 Codex 插件中调用 alembic_health 检查 MCP 可用性');
+      console.log('    2. 非简单编码任务前使用 alembic_task(operation=prime)');
+      console.log('    3. 写完后使用 alembic_guard 检查当前变更');
+    } else {
+      console.log('    1. 运行 alembic ui 启动后台服务');
+      console.log('    2. 打开 IDE Agent Mode，告诉它「帮我冷启动」');
+      console.log('    3. 所有分析和知识提取都通过 IDE 完成，无需额外配置');
+    }
     console.log('');
   }
 
@@ -593,22 +624,55 @@ export class SetupService {
     const ConfigLoader = (await import('../infrastructure/config/ConfigLoader.js')).default;
     const Bootstrap = (await import('../bootstrap.js')).default;
 
-    const env = process.env.NODE_ENV || 'development';
-    ConfigLoader.load(env);
-    ConfigLoader.set('database.path', '.asd/alembic.db');
+    const previousCwd = process.cwd();
+    const previousProjectDir = process.env.ALEMBIC_PROJECT_DIR;
+    const previousQuiet = process.env.ALEMBIC_QUIET;
+    let bootstrap: InstanceType<typeof Bootstrap> | null = null;
 
-    const bootstrap = new Bootstrap({ env });
-    await bootstrap.initialize();
+    try {
+      process.env.ALEMBIC_PROJECT_DIR = this.projectRoot;
+      if (this.quiet) {
+        process.env.ALEMBIC_QUIET = '1';
+      }
+      if (resolve(process.cwd()) !== this.projectRoot) {
+        process.chdir(this.projectRoot);
+      }
 
-    const db = bootstrap.components?.db?.getDb?.();
-    if (db) {
-      // 从子仓库文件同步核心数据到 DB 缓存（统一 Recipe 模型）
-      await this._syncRecipesToDB(db);
+      Bootstrap.configurePathGuard(this.projectRoot, this.resolver?.knowledgeBaseDir);
+
+      const env = process.env.NODE_ENV || 'development';
+      ConfigLoader.load(env);
+      ConfigLoader.set('database.path', '.asd/alembic.db');
+
+      bootstrap = new Bootstrap({ env });
+      await bootstrap.initialize();
+
+      const db = bootstrap.components?.db?.getDb?.();
+      if (db) {
+        // 从子仓库文件同步核心数据到 DB 缓存（统一 Recipe 模型）
+        await this._syncRecipesToDB(db);
+      }
+
+      return { dbPath: this.dbPath };
+    } finally {
+      if (bootstrap) {
+        await bootstrap.shutdown();
+      }
+      ConfigLoader.config = null; // 重置静态状态
+      if (previousProjectDir === undefined) {
+        delete process.env.ALEMBIC_PROJECT_DIR;
+      } else {
+        process.env.ALEMBIC_PROJECT_DIR = previousProjectDir;
+      }
+      if (previousQuiet === undefined) {
+        delete process.env.ALEMBIC_QUIET;
+      } else {
+        process.env.ALEMBIC_QUIET = previousQuiet;
+      }
+      if (resolve(process.cwd()) !== resolve(previousCwd)) {
+        process.chdir(previousCwd);
+      }
     }
-
-    await bootstrap.shutdown();
-    ConfigLoader.config = null; // 重置静态状态
-    return { dbPath: this.dbPath };
   }
 
   /**
@@ -617,7 +681,8 @@ export class SetupService {
    */
   private async _syncRecipesToDB(db: unknown) {
     const { KnowledgeSyncService } = await import('./KnowledgeSyncService.js');
-    const syncService = new KnowledgeSyncService(this.projectRoot);
+    const syncRoot = this.resolver?.dataRoot ?? this.projectRoot;
+    const syncService = new KnowledgeSyncService(syncRoot);
     const report = syncService.sync(db as Parameters<typeof syncService.sync>[0], {
       skipViolations: true,
     });
@@ -639,11 +704,14 @@ export class SetupService {
   /* ═══ Helpers ════════════════════════════════════════ */
 
   /**
-   * 在项目根目录创建 .env 文件（从 .env.example 复制）
+   * 创建 .env 文件（从 .env.example 复制）。
+   * Ghost 模式下写入外置 dataRoot，避免污染用户项目根。
    * 如果 .env 已存在则跳过并提示用户手动配置。
    */
   private _ensureEnvFile() {
-    const envPath = join(this.projectRoot, '.env');
+    const envDir = this.ghost ? (this.resolver?.dataRoot ?? this.projectRoot) : this.projectRoot;
+    mkdirSync(envDir, { recursive: true });
+    const envPath = join(envDir, '.env');
     if (existsSync(envPath)) {
       return;
     }

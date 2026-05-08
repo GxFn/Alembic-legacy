@@ -1,0 +1,48 @@
+{
+  "name": "alembic-codex",
+  "version": "0.1.0",
+  "description": "Use Alembic project memory, Recipes, Guard checks, and bootstrap workflows from Codex.",
+  "author": {
+    "name": "gaoxuefeng",
+    "url": "https://github.com/GxFn/Alembic"
+  },
+  "homepage": "https://github.com/GxFn/Alembic#readme",
+  "repository": "https://github.com/GxFn/Alembic",
+  "license": "MIT",
+  "keywords": [
+    "coding",
+    "mcp",
+    "project-memory",
+    "guard",
+    "recipes",
+    "knowledge-base"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Alembic",
+    "shortDescription": "Project memory, Recipes, and Guard checks for Codex",
+    "longDescription": "Alembic distills source code into local project knowledge, exposes it through MCP, and helps Codex write code that follows the project's real conventions. The Codex plugin uses a lightweight MCP shim that checks local status without starting services and wakes the Alembic daemon only when project knowledge, Guard, Dashboard, or long-running workflows are requested.",
+    "developerName": "gaoxuefeng",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/GxFn/Alembic#readme",
+    "defaultPrompt": [
+      "Run Alembic Codex diagnostics for this project",
+      "Check Alembic Codex status for this project",
+      "Start an Alembic Codex bootstrap job for this project",
+      "Prime Codex with this project's Alembic Recipes",
+      "Check my current changes with Alembic Guard"
+    ],
+    "brandColor": "#2563EB",
+    "composerIcon": "./assets/alembic-small.svg",
+    "logo": "./assets/alembic-logo.svg",
+    "screenshots": [
+      "./assets/alembic-codex-status.svg"
+    ]
+  }
+}

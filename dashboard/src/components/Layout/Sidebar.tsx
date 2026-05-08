@@ -1,5 +1,5 @@
 import React from 'react';
-import { BadgeCheck, Boxes, Inbox, Shield, MessageSquare, HelpCircle, LogOut, User, Moon, Sun, Library, ScrollText, BookOpen, Languages, Layers, Radio } from 'lucide-react';
+import { Activity, BadgeCheck, Boxes, Inbox, Shield, MessageSquare, HelpCircle, LogOut, User, Moon, Sun, Library, ScrollText, BookOpen, Languages, Layers, Radio } from 'lucide-react';
 import { TabType } from '../../constants';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../../theme';
@@ -86,6 +86,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     /* ── 质量治理 ── */
     { tab: 'guard', icon: Shield, label: t('sidebar.guard') },
     { tab: 'skills', icon: ScrollText, label: t('sidebar.skills'), badge: signalSuggestionCount > 0 ? signalSuggestionCount : undefined },
+    { tab: 'jobs', icon: Activity, label: t('sidebar.jobs') },
     /* ── 参考 & 监控 ── */
     { tab: 'wiki', icon: BookOpen, label: t('sidebar.repoWiki') },
     { tab: 'signals', icon: Radio, label: 'Signals' },

@@ -50,6 +50,38 @@ type CandidateInput = Partial<ExtractedRecipe & KnowledgeEntry> & {
   isMarked?: boolean;
 };
 
+export interface DaemonJobRecord {
+  id: string;
+  kind: 'bootstrap' | 'rescan';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  source: 'codex' | 'dashboard' | 'http' | 'system';
+  projectRoot: string;
+  dataRoot: string;
+  projectId: string | null;
+  request: Record<string, unknown>;
+  result?: unknown;
+  error?: { message: string; stack?: string };
+  bootstrapSessionId?: string;
+  progress?: {
+    activeTaskId?: string;
+    activeTaskLabel?: string;
+    completed?: number;
+    failed?: number;
+    filling?: number;
+    percent?: number;
+    sessionId?: string;
+    skeleton?: number;
+    status: string;
+    total?: number;
+    totalToolCalls?: number;
+  };
+  summary?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 /** V3 KnowledgeEntry → 前端 Recipe 视图类型 */
 function toRecipe(r: RawKnowledgeRecord): Recipe {
   const quality = r.quality || {} as KnowledgeQuality;
@@ -798,6 +830,8 @@ export const api = {
       bootstrapCandidates: data.bootstrapCandidates || { created: 0, failed: 0 },
       bootstrapSession: data.bootstrapSession || null,
       asyncFill: data.asyncFill || false,
+      job: data.job || null,
+      jobId: data.jobId || data.job?.id || '',
       message: data.message || '',
     };
   },
@@ -806,6 +840,42 @@ export const api = {
   async getBootstrapStatus() {
     const res = await http.get('/modules/bootstrap/status');
     return res.data?.data || { status: 'idle' };
+  },
+
+  async listJobs(opts?: {
+    kind?: 'bootstrap' | 'rescan';
+    status?: DaemonJobRecord['status'];
+    limit?: number;
+  }): Promise<DaemonJobRecord[]> {
+    const res = await http.get('/jobs', { params: opts || {} });
+    return res.data?.data?.jobs || [];
+  },
+
+  async getJob(jobId: string): Promise<DaemonJobRecord | null> {
+    const res = await http.get(`/jobs/${encodeURIComponent(jobId)}`);
+    return res.data?.data?.job || null;
+  },
+
+  async cancelJob(jobId: string, reason?: string): Promise<DaemonJobRecord | null> {
+    const res = await http.post(`/jobs/${encodeURIComponent(jobId)}/cancel`, { reason });
+    return res.data?.data?.job || null;
+  },
+
+  async enqueueBootstrapJob(opts?: {
+    contentMaxLines?: number;
+    maxFiles?: number;
+    skipGuard?: boolean;
+  }): Promise<DaemonJobRecord> {
+    const res = await http.post('/jobs/bootstrap', opts || {});
+    return res.data?.data?.job;
+  },
+
+  async enqueueRescanJob(opts?: {
+    dimensions?: string[];
+    reason?: string;
+  }): Promise<DaemonJobRecord> {
+    const res = await http.post('/jobs/rescan', opts || {});
+    return res.data?.data?.job;
   },
 
   /** 查询当前测试模式配置 */
@@ -842,6 +912,8 @@ export const api = {
       gapAnalysis: data.gapAnalysis || {},
       bootstrapSession: data.bootstrapSession || null,
       asyncFill: data.asyncFill || false,
+      job: data.job || null,
+      jobId: data.jobId || data.job?.id || '',
       status: data.status || 'complete',
       message: res.data?.message || '',
     };

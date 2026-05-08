@@ -192,18 +192,22 @@ async function scanProject(request: ToolExecutionRequest) {
 
 async function bootstrapProject(request: ToolExecutionRequest) {
   const container = getContainer(request);
-  const { bootstrapKnowledge } = await import('../../external/mcp/handlers/bootstrap-internal.js');
-  const raw = await bootstrapKnowledge(
-    { container, logger },
-    {
-      maxFiles: numberArg(request.args.maxFiles, 500),
-      skipGuard: Boolean(request.args.skipGuard || false),
-      contentMaxLines: numberArg(request.args.contentMaxLines, 120),
-      loadSkills: true,
-    }
-  );
-  const result = unwrapEnvelope(raw);
-  return { ...asRecord(result), asyncFill: true };
+  const { createDaemonJob, runDaemonJob } = await import('../../daemon/DaemonJobRunner.js');
+  const args = {
+    maxFiles: numberArg(request.args.maxFiles, 500),
+    skipGuard: Boolean(request.args.skipGuard || false),
+    contentMaxLines: numberArg(request.args.contentMaxLines, 120),
+  };
+  const job = createDaemonJob({ args, container, kind: 'bootstrap', logger, source: 'dashboard' });
+  const result = await runDaemonJob({
+    args,
+    container,
+    jobId: job.id,
+    kind: 'bootstrap',
+    logger,
+    source: 'dashboard',
+  });
+  return { ...asRecord(result.result), job: result.job, jobId: job.id };
 }
 
 async function cancelBootstrap(request: ToolExecutionRequest) {
@@ -231,23 +235,29 @@ async function cancelBootstrap(request: ToolExecutionRequest) {
 
 async function rescanProject(request: ToolExecutionRequest) {
   const container = getContainer(request);
-  const { rescanInternal } = await import('../../external/mcp/handlers/rescan-internal.js');
+  const { createDaemonJob, runDaemonJob } = await import('../../daemon/DaemonJobRunner.js');
+  const args = {
+    reason: (request.args.reason as string | undefined) || 'dashboard-rescan',
+    dimensions: Array.isArray(request.args.dimensions)
+      ? request.args.dimensions.filter(
+          (dimension): dimension is string => typeof dimension === 'string'
+        )
+      : undefined,
+  };
   logger.info('Rescan initiated via dashboard router', {
-    reason: request.args.reason,
-    dimensions: request.args.dimensions,
+    reason: args.reason,
+    dimensions: args.dimensions,
   });
-  const raw = await rescanInternal(
-    { container, logger },
-    {
-      reason: (request.args.reason as string | undefined) || 'dashboard-rescan',
-      dimensions: Array.isArray(request.args.dimensions)
-        ? request.args.dimensions.filter(
-            (dimension): dimension is string => typeof dimension === 'string'
-          )
-        : undefined,
-    }
-  );
-  return unwrapEnvelope(raw);
+  const job = createDaemonJob({ args, container, kind: 'rescan', logger, source: 'dashboard' });
+  const result = await runDaemonJob({
+    args,
+    container,
+    jobId: job.id,
+    kind: 'rescan',
+    logger,
+    source: 'dashboard',
+  });
+  return { ...asRecord(result.result), job: result.job, jobId: job.id };
 }
 
 function getContainer(request: ToolExecutionRequest) {
@@ -260,14 +270,6 @@ function getOptionalService<T>(container: ServiceContainer, name: string): T | n
   } catch {
     return null;
   }
-}
-
-function unwrapEnvelope(raw: unknown) {
-  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (parsed && typeof parsed === 'object' && 'data' in parsed) {
-    return (parsed as { data?: unknown }).data || parsed;
-  }
-  return parsed;
 }
 
 function asRecord(value: unknown) {

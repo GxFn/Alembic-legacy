@@ -27,6 +27,7 @@ import type ProjectGraph from '../core/ast/ProjectGraph.js';
 // ── Core Types ──
 import type Constitution from '../core/constitution/Constitution.js';
 import type Gateway from '../core/gateway/Gateway.js';
+import type { JobStore } from '../daemon/JobStore.js';
 // ── Domain Types ──
 // ── External Types ──
 import type { AiProvider } from '../external/ai/AiProvider.js';
@@ -110,6 +111,7 @@ export interface ServiceMap {
   gateway: Gateway;
   eventBus: EventBus;
   bootstrapTaskManager: BootstrapTaskManager;
+  jobStore: JobStore;
   knowledgeRepository: KnowledgeRepositoryImpl;
   knowledgeEdgeRepository: KnowledgeEdgeRepositoryImpl;
   codeEntityRepository: CodeEntityRepositoryImpl;

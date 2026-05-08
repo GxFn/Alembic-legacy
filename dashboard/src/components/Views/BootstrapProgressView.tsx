@@ -347,6 +347,11 @@ const BootstrapProgressView: React.FC<BootstrapProgressViewProps> = ({
             )}
           </div>
           {statusText && <p className="text-sm text-[var(--fg-secondary)] mt-0.5">{statusText}</p>}
+          {session.activeJob && (
+            <p className="text-xs text-[var(--fg-muted)] mt-0.5">
+              Job {session.activeJob.id} · {session.activeJob.status}
+            </p>
+          )}
           {(session.testMode?.enabled || session.testMode?.terminal?.enabled) && (
             <p className="text-xs text-amber-600 mt-0.5">
               {session.testMode?.enabled && t('bootstrap.testModeHint', {

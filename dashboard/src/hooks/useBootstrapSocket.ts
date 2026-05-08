@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSocket } from '../lib/socket';
 import api from '../api';
+import type { DaemonJobRecord } from '../api';
 
 /* ═══════════════════════════════════════════════════════
  *  Types
@@ -86,6 +87,9 @@ export interface BootstrapSession {
   elapsedMs?: number;
   /** 测试模式 */
   testMode?: TestModeConfig | null;
+  /** daemon JobStore record, when the session is backed by a daemon job */
+  activeJob?: DaemonJobRecord | null;
+  jobs?: DaemonJobRecord[];
 }
 
 interface UseBootstrapSocketReturn {

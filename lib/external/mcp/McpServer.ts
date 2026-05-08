@@ -27,6 +27,7 @@ import Logger from '#infra/logging/Logger.js';
 import { resolveDataRoot, resolveProjectRoot } from '#shared/resolveProjectRoot.js';
 import { CapabilityCatalog } from '#tools/catalog/CapabilityCatalog.js';
 import { LightweightRouter } from '#tools/core/LightweightRouter.js';
+import type { ToolActor, ToolCallSource, ToolSurface } from '#tools/core/ToolCallContext.js';
 import type { ToolRouterContract } from '#tools/core/ToolContracts.js';
 import type { ToolResultEnvelope } from '#tools/core/ToolResultEnvelope.js';
 import { applyPendingAutoApprove, markAutoApproveNeeded } from './autoApproveInjector.js';
@@ -52,8 +53,18 @@ interface McpSession {
 
 /** McpServer constructor options */
 interface McpServerOptions {
+  actorRole?: string;
+  autoApprove?: boolean;
   container?: McpServiceContainer | null;
   bootstrap?: BootstrapLike | null;
+  source?: ToolCallSource;
+  surface?: ToolSurface;
+}
+
+export interface McpToolCallOptions {
+  actor?: ToolActor;
+  source?: ToolCallSource;
+  surface?: ToolSurface;
 }
 
 /** Bootstrap instance minimal shape */
@@ -102,7 +113,11 @@ export class McpServer {
   container: McpServiceContainer | null;
   logger: ReturnType<typeof Logger.getInstance> | null;
   _autoApproveMarked: boolean;
+  _autoApproveEnabled: boolean;
   _capabilityProbe: CapabilityProbe | null;
+  _defaultActorRole: string | null;
+  _defaultSource: ToolCallSource;
+  _defaultSurface: ToolSurface;
   _lastTaskOperation: string;
   _toolRouter: ToolRouterContract | null;
   _session: McpSession;
@@ -117,7 +132,11 @@ export class McpServer {
     this.sdkServer = null;
     this._startedAt = Date.now();
     this._autoApproveMarked = false;
+    this._autoApproveEnabled = options.autoApprove !== false;
     this._capabilityProbe = null;
+    this._defaultActorRole = options.actorRole || null;
+    this._defaultSource = options.source || { kind: 'mcp', name: 'tools/call' };
+    this._defaultSurface = options.surface || 'mcp';
     this._lastTaskOperation = '';
     this._toolRouter = null;
 
@@ -267,20 +286,24 @@ export class McpServer {
     });
   }
 
-  async _handleToolCall(name: string, args: Record<string, unknown>): Promise<ToolResultEnvelope> {
+  async _handleToolCall(
+    name: string,
+    args: Record<string, unknown>,
+    options: McpToolCallOptions = {}
+  ): Promise<ToolResultEnvelope> {
     const router = this._getToolRouter();
     const gatewayMapping = this._resolveMcpGatewayMapping(name, args);
-    const actorRole = this._resolveMcpActorRole();
+    const actorRole = options.actor?.role || this._defaultActorRole || this._resolveMcpActorRole();
     return router.execute({
       toolId: name,
       args,
-      surface: 'mcp',
+      surface: options.surface || this._defaultSurface,
       actor: {
         role: actorRole,
-        user: process.env.USER || undefined,
-        sessionId: this._session.id,
+        user: options.actor?.user || process.env.USER || undefined,
+        sessionId: options.actor?.sessionId || this._session.id,
       },
-      source: { kind: 'mcp', name: 'tools/call' },
+      source: options.source || this._defaultSource,
       governance: gatewayMapping
         ? {
             gatewayAction: gatewayMapping.action,
@@ -339,7 +362,7 @@ export class McpServer {
 
     // ── 首次成功 tool call → 标记 autoApprove（one-shot） ──
     // 用户已手动授权了至少一个工具，标记后下次 MCP 启动注入 autoApprove
-    if (!this._autoApproveMarked) {
+    if (this._autoApproveEnabled && !this._autoApproveMarked) {
       this._autoApproveMarked = true;
       try {
         const projectRoot = process.env.ALEMBIC_PROJECT_DIR || process.cwd();

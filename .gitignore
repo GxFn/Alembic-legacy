@@ -37,6 +37,9 @@ resources/native-ui/screenshot
 # isOwnDevRepo() already prevents creation; belt-and-suspenders
 .asd/
 Alembic/
+# Codex plugin ships a lowercase skills/alembic entry; keep runtime Alembic/ ignored.
+!plugins/alembic-codex/skills/alembic/
+!plugins/alembic-codex/skills/alembic/SKILL.md
 
 # ─── Testing ─────────────────────────────────────────
 test/temp/

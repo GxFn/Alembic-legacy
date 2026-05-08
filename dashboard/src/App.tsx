@@ -30,6 +30,7 @@ import AiChatView from './components/Views/AiChatView';
 import KnowledgeView from './components/Views/KnowledgeView';
 import SkillsView from './components/Views/SkillsView';
 import BootstrapProgressView from './components/Views/BootstrapProgressView';
+import JobsView from './components/Views/JobsView';
 import WikiView from './components/Views/WikiView';
 import SignalReportView from './components/Views/SignalReportView';
 import RecipeEditor from './components/Modals/RecipeEditor';
@@ -270,7 +271,12 @@ const App: React.FC = () => {
         abortControllerRef.current.abort();
       }
       // 取消后端异步填充
-      await api.cancelBootstrap('Cancelled by user via Dashboard');
+      await Promise.allSettled([
+        api.cancelBootstrap('Cancelled by user via Dashboard'),
+        bootstrap.session?.activeJob
+          ? api.cancelJob(bootstrap.session.activeJob.id, 'Cancelled by user via Dashboard')
+          : Promise.resolve(null),
+      ]);
     } catch {
       // best-effort
     } finally {
@@ -668,7 +674,7 @@ const App: React.FC = () => {
 
     // 如果返回了 bootstrapSession，初始化到 socket hook
     if (result.bootstrapSession) {
-      bootstrap.initFromApiResponse(result.bootstrapSession);
+      bootstrap.initFromApiResponse({ ...result.bootstrapSession, activeJob: result.job || null });
     }
 
     // 刷新候选列表
@@ -718,7 +724,7 @@ const App: React.FC = () => {
 
     // 如果有异步填充会话，初始化 socket 监听进度
     if (result.bootstrapSession) {
-      bootstrap.initFromApiResponse(result.bootstrapSession);
+      bootstrap.initFromApiResponse({ ...result.bootstrapSession, activeJob: result.job || null });
     }
 
     fetchData();
@@ -1151,6 +1157,8 @@ const App: React.FC = () => {
       <PanoramaView />
       ) : activeTab === 'skills' ? (
       <SkillsView onRefresh={fetchData} signalSuggestionCount={signalSuggestionCount} onSuggestionCountChange={setSignalSuggestionCount} />
+      ) : activeTab === 'jobs' ? (
+      <JobsView onOpenCandidates={() => navigateToTab('candidates')} />
       ) : activeTab === 'candidates' ? (
       <>
         {/* Bootstrap 异步填充进度面板 */}

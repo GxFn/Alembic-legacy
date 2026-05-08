@@ -56,6 +56,7 @@ export const en: DeepString<typeof zh> = {
     guard: 'Guard',
     panorama: 'Panorama',
     skills: 'Skills',
+    jobs: 'Jobs',
     repoWiki: 'Repo Wiki',
     signals: 'Signals',
     aiAssistant: 'AI Assistant',

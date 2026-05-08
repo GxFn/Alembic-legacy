@@ -312,5 +312,7 @@ export default function migrate(db: import('better-sqlite3').Database) {
     CREATE INDEX IF NOT EXISTS idx_ce_superclass ON code_entities(superclass);
   `);
 
-  process.stderr.write('  ✅ 001: Initial V3 schema created (10 tables)\n');
+  if (process.env.ALEMBIC_QUIET !== '1') {
+    process.stderr.write('  ✅ 001: Initial V3 schema created (10 tables)\n');
+  }
 }
