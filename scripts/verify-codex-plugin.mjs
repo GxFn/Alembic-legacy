@@ -187,6 +187,10 @@ expect(
   readme.includes('alembic_codex_diagnostics'),
   'README.md must document alembic_codex_diagnostics'
 );
+expect(
+  readme.includes('alembic codex diagnostics --json'),
+  'README.md must document CLI Codex diagnostics'
+);
 expect(readme.includes('alembic_codex_cleanup'), 'README.md must document cleanup policy');
 expect(
   readme.includes('Use it when you want Codex to:'),
@@ -197,10 +201,18 @@ expect(
   rootReadme.includes('npm run release:codex-plugin'),
   'root README must document Codex plugin release check'
 );
+expect(
+  rootReadme.includes('alembic codex diagnostics --json'),
+  'root README must document CLI Codex diagnostics'
+);
 expect(rootReadmeCn.includes('## Codex 插件'), 'Chinese README must document Codex plugin');
 expect(
   rootReadmeCn.includes('npm run release:codex-plugin'),
   'Chinese README must document Codex plugin release check'
+);
+expect(
+  rootReadmeCn.includes('alembic codex diagnostics --json'),
+  'Chinese README must document CLI Codex diagnostics'
 );
 
 if (errors.length > 0) {

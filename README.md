@@ -56,6 +56,8 @@ Recommended first run inside Codex:
 For release validation:
 
 ```bash
+npm run build
+alembic codex diagnostics --json
 npm run release:codex-plugin
 npm run release:codex-plugin:daemon   # optional localhost daemon smoke
 ```

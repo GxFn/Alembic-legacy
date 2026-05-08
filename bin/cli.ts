@@ -6,6 +6,7 @@
  * Usage:
  *   alembic setup           - 初始化项目（--repo 指定子仓库远程地址）
  *   alembic codex init      - Codex 插件模式初始化（默认 Ghost）
+ *   alembic codex diagnostics - Codex 插件运行时诊断
  *   alembic codex status    - Codex 插件模式状态检查
  *   alembic daemon start    - 启动 Alembic daemon（动态端口 + state 文件）
  *   alembic remote <url>    - 将 recipes 目录转为独立子仓库并关联远程仓库
@@ -140,6 +141,30 @@ codex
     }
 
     if (!ok) {
+      process.exitCode = 1;
+    }
+  });
+
+codex
+  .command('diagnostics')
+  .description('检查 Codex 插件运行时、MCP pin、资源文件和 daemon 版本，不启动 daemon')
+  .option('-d, --dir <path>', '项目目录', '.')
+  .option('--json', 'JSON 格式输出')
+  .action(async (opts) => {
+    const { CodexMcpServer } = await import('../lib/external/mcp/CodexMcpServer.js');
+    const server = new CodexMcpServer({ projectRoot: resolve(opts.dir) });
+    const result = (await server.buildDiagnostics()) as {
+      data?: Record<string, unknown>;
+      success?: boolean;
+    };
+    const diagnostics = result.data || {};
+
+    if (opts.json) {
+      cli.json(diagnostics);
+      return;
+    }
+    printCodexDiagnostics(diagnostics);
+    if (diagnostics.ok === false) {
       process.exitCode = 1;
     }
   });
@@ -2267,6 +2292,66 @@ function readJsonIfExists(filePath: string): unknown | null {
   }
 }
 
+function printCodexDiagnostics(diagnostics: Record<string, unknown>) {
+  const node = plainRecord(diagnostics.node);
+  const commands = plainRecord(diagnostics.commands);
+  const npm = plainRecord(commands?.npm);
+  const npx = plainRecord(commands?.npx);
+  const plugin = plainRecord(diagnostics.plugin);
+  const mcp = plainRecord(plugin?.mcp);
+  const daemon = plainRecord(diagnostics.daemon);
+  const codexInfo = plainRecord(diagnostics.codex);
+  const issues = Array.isArray(diagnostics.issues) ? diagnostics.issues : [];
+  const nextActions = Array.isArray(diagnostics.nextActions) ? diagnostics.nextActions : [];
+
+  cli.log('');
+  cli.log('  Alembic Codex Diagnostics');
+  cli.log(`  ${'─'.repeat(40)}`);
+  cli.log(`  Overall:     ${diagnostics.ok === false ? 'needs attention' : 'ok'}`);
+  cli.log(`  Summary:     ${String(diagnostics.summary || 'n/a')}`);
+  cli.log(`  Node:        ${formatCheck(node?.ok)} ${String(node?.version || 'unknown')}`);
+  cli.log(`  npm:         ${formatCheck(npm?.available)} ${String(npm?.version || 'unavailable')}`);
+  cli.log(`  npx:         ${formatCheck(npx?.available)} ${String(npx?.version || 'unavailable')}`);
+  cli.log(
+    `  MCP pin:     ${formatCheck(mcp?.packagePin)} ${String(mcp?.pinnedSpecifier || 'missing')}`
+  );
+  cli.log(`  Plugin:      ${formatCheck(plugin?.ok)} ${String(plugin?.root || 'missing')}`);
+  cli.log(`  Daemon:      ${daemon?.ready ? 'ready' : String(daemon?.status || 'not running')}`);
+  cli.log(
+    `  Tier:        requested=${String(codexInfo?.requestedTier || 'agent')} effective=${String(
+      codexInfo?.effectiveTier || 'agent'
+    )}`
+  );
+
+  if (issues.length > 0) {
+    cli.log('');
+    cli.log('  Issues:');
+    for (const rawIssue of issues) {
+      const issue = plainRecord(rawIssue);
+      if (!issue) {
+        continue;
+      }
+      cli.log(
+        `    - [${String(issue.severity || 'warning')}] ${String(
+          issue.code || 'UNKNOWN'
+        )}: ${String(issue.message || '')}`
+      );
+      if (issue.action) {
+        cli.log(`      Action: ${String(issue.action)}`);
+      }
+    }
+  }
+
+  if (nextActions.length > 0) {
+    cli.log('');
+    cli.log('  Next:');
+    for (const action of nextActions) {
+      cli.log(`    - ${String(action)}`);
+    }
+  }
+  cli.blank();
+}
+
 function printCodexStatus(status: Awaited<ReturnType<typeof buildCodexStatus>>) {
   cli.log('');
   cli.log('  Alembic Codex Status');
@@ -2310,6 +2395,16 @@ function printCodexStatus(status: Awaited<ReturnType<typeof buildCodexStatus>>) 
     }
   }
   cli.blank();
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function formatCheck(value: unknown): string {
+  return value === true ? 'ok' : 'missing';
 }
 
 function parseCliInteger(value: string | number, label: string): number {

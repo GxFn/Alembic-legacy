@@ -21,6 +21,13 @@ Use `alembic_codex_diagnostics` first. It reports Node, npm, npx, package versio
 
 Use `alembic_codex_status` to inspect workspace initialization and daemon state without starting the daemon. The response includes an `onboarding` block with a concise state, primary recommended tool call, whether that call starts the daemon, and follow-up actions.
 
+Outside Codex, the same runtime checks are available from the CLI:
+
+```bash
+alembic codex diagnostics --json
+alembic codex status --json
+```
+
 The normal first minute is:
 
 1. `alembic_codex_diagnostics`

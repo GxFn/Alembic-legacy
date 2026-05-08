@@ -12,6 +12,7 @@ on:
 
 env:
   API_BASE: http://localhost:3100/api/v1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NODE_ENV: test
 
 jobs:
