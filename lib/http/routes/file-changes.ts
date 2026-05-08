@@ -15,14 +15,25 @@
 import express, { type Request, type Response } from 'express';
 import Logger from '../../infrastructure/logging/Logger.js';
 import { getServiceContainer } from '../../injection/ServiceContainer.js';
+import { getFileChangeSourceTracker } from '../../service/evolution/FileChangeSourceTracker.js';
 import type { FileChangeDispatcher } from '../../service/FileChangeDispatcher.js';
-import type { FileChangeEvent, FileChangeEventSource } from '../../types/reactive-evolution.js';
+import type {
+  FileChangeEvent,
+  FileChangeEventSource,
+  ReactiveEvolutionReport,
+} from '../../types/reactive-evolution.js';
 
 const router = express.Router();
 const logger = Logger.getInstance();
 
 const VALID_TYPES = new Set(['created', 'renamed', 'deleted', 'modified']);
 const VALID_SOURCES = new Set<FileChangeEventSource>(['ide-edit', 'git-head', 'git-worktree']);
+const sourceTracker = getFileChangeSourceTracker();
+
+router.post('/heartbeat', (_req: Request, res: Response) => {
+  sourceTracker.markVscodeExtensionSeen();
+  res.json({ success: true, data: sourceTracker.snapshot() });
+});
 
 /**
  * POST /api/v1/file-changes
@@ -90,11 +101,13 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    sourceTracker.markVscodeExtensionSeen();
+
     const container = getServiceContainer();
     const dispatcher = container.get('fileChangeDispatcher') as FileChangeDispatcher;
 
     // 同步分发 — FileChangeHandler 是纯代码路径毫秒级（文档 §5.1 备注）
-    let report;
+    let report: ReactiveEvolutionReport;
     try {
       report = await dispatcher.dispatch(validEvents);
     } catch (err: unknown) {

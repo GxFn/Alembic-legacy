@@ -245,6 +245,17 @@ export class ApiClient {
     }
   }
 
+  async reportFileChangeHeartbeat(): Promise<boolean> {
+    try {
+      const res = await this._post<ApiResponse>('/file-changes/heartbeat', {
+        source: 'vscode-extension',
+      });
+      return res?.success === true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * @deprecated 使用 reportFileChanges 替代。保留兼容旧调用。
    */
@@ -272,76 +283,92 @@ export class ApiClient {
    */
   private _normalizeSearchResults(rawItems: RawSearchItem[]): SearchResultItem[] {
     return rawItems
-      .map((r: RawSearchItem) => {
-        let code = '';
-        let explanation = '';
-        let headers: string[] = [];
-
-        // ── 优先从顶层 r.headers 读取（可能是 JSON 字符串或数组）──
-        if (r.headers) {
-          if (typeof r.headers === 'string') {
-            try {
-              const parsed: unknown = JSON.parse(r.headers);
-              if (Array.isArray(parsed)) { headers = parsed as string[]; }
-            } catch { /* ignored */ }
-          } else if (Array.isArray(r.headers)) {
-            headers = r.headers;
-          }
-        }
-
-        if (r.content) {
-          const content: ParsedContent | null = typeof r.content === 'string'
-            ? (this._tryParse(r.content) as ParsedContent | null)
-            : r.content;
-          if (content) {
-            code =
-              content.code ||
-              content.pattern ||
-              content.content ||
-              content.body ||
-              content.snippet ||
-              content.solution ||
-              content.example ||
-              '';
-            explanation =
-              content.rationale ||
-              content.description ||
-              content.summary ||
-              content.explanation ||
-              '';
-            // content.headers 作为 fallback
-            if (headers.length === 0 && Array.isArray(content.headers)) {
-              headers = content.headers;
-            }
-            // 从 Markdown 提取代码
-            if (!code && content.markdown) {
-              code = this._extractCodeFromMarkdown(content.markdown);
-            }
-          }
-        }
-
-        if (!code && r.code) {
-          code = r.code;
-        }
-
-        // 从 code 开头分离 import 行
-        const { cleanedCode, extractedHeaders } = this._separateImports(code);
-        for (const h of extractedHeaders) {
-          if (!headers.includes(h)) {
-            headers.push(h);
-          }
-        }
-
-        return {
-          title: r.title || r.name || r.id || 'Recipe',
-          code: cleanedCode || '(no code)',
-          explanation: explanation || r.summary || r.description || '',
-          headers,
-          moduleName: r.moduleName || undefined,
-          trigger: r.trigger || r.completionKey || '',
-        };
-      })
+      .map((r: RawSearchItem) => this._normalizeSearchItem(r))
       .filter((item: SearchResultItem) => item.title && item.code !== '(no code)');
+  }
+
+  private _normalizeSearchItem(raw: RawSearchItem): SearchResultItem {
+    const content = this._parseContent(raw.content);
+    const headers = this._resolveHeaders(raw.headers, content?.headers);
+    const code = this._resolveCode(raw, content);
+    const { cleanedCode, extractedHeaders } = this._separateImports(code);
+
+    return {
+      title: raw.title || raw.name || raw.id || 'Recipe',
+      code: cleanedCode || '(no code)',
+      explanation: this._resolveExplanation(raw, content),
+      headers: this._mergeHeaders(headers, extractedHeaders),
+      moduleName: raw.moduleName || undefined,
+      trigger: raw.trigger || raw.completionKey || '',
+    };
+  }
+
+  private _parseContent(rawContent: RawSearchItem['content']): ParsedContent | null {
+    if (!rawContent) {
+      return null;
+    }
+    return typeof rawContent === 'string'
+      ? (this._tryParse(rawContent) as ParsedContent | null)
+      : rawContent;
+  }
+
+  private _resolveHeaders(
+    rawHeaders: RawSearchItem['headers'],
+    contentHeaders?: string[]
+  ): string[] {
+    const headers = this._parseHeaders(rawHeaders);
+    if (headers.length === 0 && Array.isArray(contentHeaders)) {
+      return [...contentHeaders];
+    }
+    return headers;
+  }
+
+  private _parseHeaders(rawHeaders: RawSearchItem['headers']): string[] {
+    if (Array.isArray(rawHeaders)) {
+      return [...rawHeaders];
+    }
+    if (typeof rawHeaders !== 'string') {
+      return [];
+    }
+
+    const parsed = this._tryParse(rawHeaders);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  }
+
+  private _resolveCode(raw: RawSearchItem, content: ParsedContent | null): string {
+    const contentCode = content
+      ? content.code ||
+        content.pattern ||
+        content.content ||
+        content.body ||
+        content.snippet ||
+        content.solution ||
+        content.example ||
+        ''
+      : '';
+    if (contentCode) {
+      return contentCode;
+    }
+
+    const markdownCode = content?.markdown ? this._extractCodeFromMarkdown(content.markdown) : '';
+    return markdownCode || raw.code || '';
+  }
+
+  private _resolveExplanation(raw: RawSearchItem, content: ParsedContent | null): string {
+    const contentExplanation = content
+      ? content.rationale || content.description || content.summary || content.explanation || ''
+      : '';
+    return contentExplanation || raw.summary || raw.description || '';
+  }
+
+  private _mergeHeaders(headers: string[], extractedHeaders: string[]): string[] {
+    const merged = [...headers];
+    for (const h of extractedHeaders) {
+      if (!merged.includes(h)) {
+        merged.push(h);
+      }
+    }
+    return merged;
   }
 
   private _separateImports(code: string): {

@@ -36,6 +36,7 @@ export interface FileChangeEvent {
 
 /** Report 回调签名 —— 由 Collector 触发，extension.ts 订阅以弹窗 */
 export type FileChangeReportListener = (report: FileChangeReport) => void;
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /* ═══════════════════ EventBuffer ═══════════════════ */
 
@@ -165,6 +166,7 @@ export class FileChangeCollector implements vscode.Disposable {
   /** Working Tree Diff 状态 */
   private lastWorkingSets = new Map<string, Set<string>>();
   private workingTreeTimer: ReturnType<typeof setInterval> | undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly apiClient: ApiClient,
@@ -178,6 +180,7 @@ export class FileChangeCollector implements vscode.Disposable {
     this.setupIdeSignals(context);
     this.setupGitHeadDiff(context);
     this.setupWorkingTreeDiff(context);
+    this.setupHeartbeat(context);
   }
 
   dispose(): void {
@@ -186,9 +189,31 @@ export class FileChangeCollector implements vscode.Disposable {
     if (this.workingTreeTimer) {
       clearInterval(this.workingTreeTimer);
     }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
     for (const d of this.disposables) {
       d.dispose();
     }
+  }
+
+  private setupHeartbeat(context: vscode.ExtensionContext): void {
+    const ping = () => {
+      this.apiClient.reportFileChangeHeartbeat().catch(() => {});
+    };
+    ping();
+    this.heartbeatTimer = setInterval(ping, HEARTBEAT_INTERVAL_MS);
+    const disposable = {
+      dispose: () => {
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = undefined;
+        }
+      },
+    };
+    context.subscriptions.push(disposable);
+    this.disposables.push(disposable);
   }
 
   /* ═══ Signal 1-3: IDE File Operations ═══ */

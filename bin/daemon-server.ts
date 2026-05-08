@@ -19,11 +19,14 @@ import {
 import HttpServer from '../lib/http/HttpServer.js';
 import Logger from '../lib/infrastructure/logging/Logger.js';
 import { getServiceContainer } from '../lib/injection/ServiceContainer.js';
+import { DaemonFileChangeCollector } from '../lib/service/evolution/DaemonFileChangeCollector.js';
 import { DASHBOARD_DIR } from '../lib/shared/package-root.js';
 import { shutdown } from '../lib/shared/shutdown.js';
 import { timerRegistry } from '../lib/shared/TimerRegistry.js';
 
 shutdown.install();
+
+type WorkspaceResolver = Awaited<ReturnType<Bootstrap['initialize']>>['workspaceResolver'];
 
 process.on('uncaughtException', (error) => {
   const logger = Logger.getInstance();
@@ -90,36 +93,27 @@ async function main() {
   }
 
   const httpServer = await startHttpServer(requestedPort, host);
-  let actualPort = getListeningPort(httpServer) ?? requestedPort;
-  if (!actualPort || actualPort < 0) {
-    actualPort = requestedPort;
-  }
-  if (!actualPort || actualPort <= 0) {
-    throw new Error(`Daemon HTTP server did not bind to a valid port: ${actualPort}`);
-  }
+  const fileChangeCollector = startDaemonFileChangeCollector({
+    container,
+    logger,
+    projectRoot,
+  });
+  const actualPort = resolveBoundDaemonPort(httpServer, requestedPort);
   const daemonUrl = buildDaemonUrl(host, actualPort);
   const dashboardMounted = mountDashboardIfAvailable(httpServer);
   await verifyHttpServerReady(daemonUrl);
 
   const resolver = components.workspaceResolver;
   const schemaMigrationVersion = getSchemaMigrationVersion(components.db);
-  const now = new Date().toISOString();
-  writeDaemonState(statePath, {
-    schemaVersion: DAEMON_STATE_SCHEMA_VERSION,
+  writeReadyDaemonState({
+    statePath,
     projectRoot,
-    dataRoot: resolver?.dataRoot || projectRoot,
-    projectId: resolver?.projectId || null,
-    pid: process.pid,
+    resolver,
     host,
-    port: actualPort,
-    url: daemonUrl,
-    dashboardUrl: dashboardMounted ? daemonUrl : `${daemonUrl}/api-spec`,
+    actualPort,
+    daemonUrl,
+    dashboardMounted,
     token,
-    version: getPackageVersion(),
-    mode: 'daemon',
-    startedAt: now,
-    lastReadyAt: now,
-    databasePath: resolver?.databasePath || '',
     schemaMigrationVersion,
   });
 
@@ -155,6 +149,9 @@ async function main() {
     await timerRegistry.dispose();
   }, 'timer-registry');
   shutdown.register(() => {
+    fileChangeCollector?.stop();
+  }, 'daemon-file-change-collector');
+  shutdown.register(() => {
     markInterruptedDaemonJobs({
       code: 'DAEMON_SHUTDOWN',
       container,
@@ -162,6 +159,73 @@ async function main() {
       reason: 'Alembic daemon shut down before this job completed. Start a new job to retry.',
     });
   }, 'daemon-jobs');
+}
+
+function startDaemonFileChangeCollector(options: {
+  container: ReturnType<typeof getServiceContainer>;
+  logger: ReturnType<typeof Logger.getInstance>;
+  projectRoot: string;
+}): DaemonFileChangeCollector | null {
+  if (process.env.ALEMBIC_DAEMON_FILE_CHANGES === '0') {
+    options.logger.info('[daemon-file-change] disabled by ALEMBIC_DAEMON_FILE_CHANGES=0');
+    return null;
+  }
+
+  const dispatcher = options.container.get(
+    'fileChangeDispatcher'
+  ) as import('../lib/service/FileChangeDispatcher.js').FileChangeDispatcher;
+  const collector = new DaemonFileChangeCollector({
+    projectRoot: options.projectRoot,
+    dispatcher,
+    intervalMs: Number.parseInt(process.env.ALEMBIC_DAEMON_FILE_CHANGE_INTERVAL_MS || '', 10),
+    extensionTtlMs: Number.parseInt(process.env.ALEMBIC_VSCODE_HEARTBEAT_TTL_MS || '', 10),
+    logger: options.logger,
+  });
+  collector.start();
+  return collector;
+}
+
+function resolveBoundDaemonPort(httpServer: HttpServer, requestedPort: number): number {
+  let actualPort = getListeningPort(httpServer) ?? requestedPort;
+  if (!actualPort || actualPort < 0) {
+    actualPort = requestedPort;
+  }
+  if (!actualPort || actualPort <= 0) {
+    throw new Error(`Daemon HTTP server did not bind to a valid port: ${actualPort}`);
+  }
+  return actualPort;
+}
+
+function writeReadyDaemonState(options: {
+  statePath: string;
+  projectRoot: string;
+  resolver: WorkspaceResolver;
+  host: string;
+  actualPort: number;
+  daemonUrl: string;
+  dashboardMounted: boolean;
+  token: string;
+  schemaMigrationVersion: string | null;
+}): void {
+  const now = new Date().toISOString();
+  writeDaemonState(options.statePath, {
+    schemaVersion: DAEMON_STATE_SCHEMA_VERSION,
+    projectRoot: options.projectRoot,
+    dataRoot: options.resolver?.dataRoot || options.projectRoot,
+    projectId: options.resolver?.projectId || null,
+    pid: process.pid,
+    host: options.host,
+    port: options.actualPort,
+    url: options.daemonUrl,
+    dashboardUrl: options.dashboardMounted ? options.daemonUrl : `${options.daemonUrl}/api-spec`,
+    token: options.token,
+    version: getPackageVersion(),
+    mode: 'daemon',
+    startedAt: now,
+    lastReadyAt: now,
+    databasePath: options.resolver?.databasePath || '',
+    schemaMigrationVersion: options.schemaMigrationVersion,
+  });
 }
 
 async function startHttpServer(port: number, host: string): Promise<HttpServer> {

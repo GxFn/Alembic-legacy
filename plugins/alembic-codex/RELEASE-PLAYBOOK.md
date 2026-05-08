@@ -31,7 +31,7 @@ That means every package version bump must keep these surfaces aligned:
 
 Use the tag-driven GitHub Release workflow as the source of truth. Avoid local manual `npm publish` except for emergency recovery.
 
-1. Choose the version, for example `0.0.11`.
+1. Choose the version, for example `0.1.0`.
 2. Update package and plugin pins to the same version.
 3. Run local release checks:
 
@@ -47,8 +47,8 @@ npm run release:codex-plugin:daemon
 6. Create an annotated tag on the exact green commit:
 
 ```bash
-git tag -a v0.0.11 -m "Release v0.0.11"
-git push origin v0.0.11
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
 ```
 
 7. Watch the `Release` workflow. It verifies the tag matches `package.json`, builds runtime/Dashboard/VS Code extension, runs lint, unit and integration tests, previews the npm package, uploads the VS Code artifact, and publishes npm with provenance.
