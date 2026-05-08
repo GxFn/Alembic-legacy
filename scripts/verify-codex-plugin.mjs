@@ -8,10 +8,13 @@ const packageJson = readJson(join(root, 'package.json'));
 const pluginRoot = join(root, 'plugins', 'alembic-codex');
 const pluginJsonPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
 const mcpJsonPath = join(pluginRoot, '.mcp.json');
+const marketplacePath = join(root, '.agents', 'plugins', 'marketplace.json');
 const readmePath = join(pluginRoot, 'README.md');
 const pluginJson = readJson(pluginJsonPath);
 const mcpJson = readJson(mcpJsonPath);
+const marketplaceJson = readJson(marketplacePath);
 const errors = [];
+const iface = pluginJson.interface || {};
 
 const packageVersion = packageJson.version;
 const expectedRuntime = `alembic-ai@${packageVersion}`;
@@ -19,10 +22,18 @@ const server = mcpJson.mcpServers?.alembic;
 const args = Array.isArray(server?.args) ? server.args : [];
 const packageIndex = args.indexOf('--package');
 const pinnedSpecifier = packageIndex >= 0 ? args[packageIndex + 1] : null;
+const marketplaceEntry = Array.isArray(marketplaceJson.plugins)
+  ? marketplaceJson.plugins.find((entry) => entry?.name === 'alembic-codex')
+  : null;
 
 expect(
   packageJson.bin?.['alembic-codex-mcp'] === 'dist/bin/codex-mcp.js',
   'package.json must expose bin.alembic-codex-mcp -> dist/bin/codex-mcp.js'
+);
+expect(
+  Array.isArray(packageJson.files) &&
+    packageJson.files.includes('.agents/plugins/marketplace.json'),
+  'package.json files[] must include .agents/plugins/marketplace.json'
 );
 expect(
   Array.isArray(packageJson.files) && packageJson.files.includes('plugins'),
@@ -51,8 +62,42 @@ expect(
   server?.env?.ALEMBIC_CODEX_ENABLE_ADMIN === '0',
   '.mcp.json must disable Codex admin tools by default'
 );
+expect(
+  marketplaceJson.name === 'alembic-codex-marketplace',
+  '.agents/plugins/marketplace.json must name the marketplace alembic-codex-marketplace'
+);
+expect(
+  marketplaceJson.interface?.displayName === 'Alembic',
+  '.agents/plugins/marketplace.json must display as Alembic'
+);
+expect(Boolean(marketplaceEntry), '.agents/plugins/marketplace.json must include alembic-codex');
+if (marketplaceEntry) {
+  expect(
+    marketplaceEntry.source?.source === 'local',
+    'marketplace alembic-codex source must be local'
+  );
+  expect(
+    marketplaceEntry.source?.path === './plugins/alembic-codex',
+    'marketplace alembic-codex path must be ./plugins/alembic-codex'
+  );
+  expect(
+    resolve(root, marketplaceEntry.source?.path || '') === pluginRoot,
+    'marketplace alembic-codex path must resolve to the plugin root'
+  );
+  expect(
+    marketplaceEntry.policy?.installation === 'AVAILABLE',
+    'marketplace alembic-codex installation policy must be AVAILABLE'
+  );
+  expect(
+    marketplaceEntry.policy?.authentication === 'ON_INSTALL',
+    'marketplace alembic-codex authentication policy must be ON_INSTALL'
+  );
+  expect(
+    marketplaceEntry.category === iface.category,
+    'marketplace alembic-codex category must match plugin interface category'
+  );
+}
 
-const iface = pluginJson.interface || {};
 const assets = [
   iface.composerIcon,
   iface.logo,

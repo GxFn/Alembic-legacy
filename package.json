@@ -169,6 +169,7 @@
     "url": "https://github.com/GxFn/Alembic/issues"
   },
   "files": [
+    ".agents/plugins/marketplace.json",
     "dist",
     "config",
     "scripts/postbuild.mjs",

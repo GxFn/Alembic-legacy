@@ -22,7 +22,13 @@ Before publishing, run:
 npm run verify:codex-plugin
 ```
 
-The verifier checks the pinned MCP runtime, lightweight `alembic-codex-mcp` binary, default agent tier, disabled admin gate, declared assets, shipped skills, default prompts, and README runtime fallback.
+The verifier checks the local Codex marketplace entry, pinned MCP runtime, lightweight `alembic-codex-mcp` binary, default agent tier, disabled admin gate, declared assets, shipped skills, default prompts, and README runtime fallback.
+
+## Local Marketplace
+
+This repository includes `.agents/plugins/marketplace.json` so local Codex builds can discover Alembic as an installable plugin entry. The entry points to `./plugins/alembic-codex`, marks installation as `AVAILABLE`, and uses `ON_INSTALL` authentication policy.
+
+`npm run smoke:codex-plugin` packages the runtime, resolves this marketplace entry from the packed tarball, copies the plugin into a temporary install root, and validates the installed manifest, MCP config, assets, skills, and stdio MCP calls.
 
 ## Offline Fallback
 

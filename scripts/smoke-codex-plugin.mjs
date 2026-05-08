@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -89,6 +90,8 @@ try {
     symlinkSync(repoNodeModules, join(packageRoot, 'node_modules'), 'dir');
   }
 
+  simulateMarketplaceInstall({ packageRoot, packageVersion: packageJson.version });
+
   process.env.ALEMBIC_HOME = alembicHome;
   process.env.ALEMBIC_PROJECT_DIR = projectRoot;
   process.env.CODEX_WORKSPACE_DIR = projectRoot;
@@ -163,6 +166,7 @@ try {
         packageVersion: packageJson.version,
         projectRoot,
         alembicHome,
+        install: 'passed',
         stdio,
         daemon: shouldRunDaemon ? daemon?.data?.dashboardUrl || null : 'skipped',
       },
@@ -188,6 +192,7 @@ try {
 
 function requiredPackageFiles(version) {
   return [
+    'package/.agents/plugins/marketplace.json',
     'package/dist/bin/codex-mcp.js',
     'package/dist/bin/daemon-server.js',
     'package/dist/lib/external/mcp/CodexMcpServer.js',
@@ -240,6 +245,78 @@ function assert(condition, message) {
 function assertResult(result, label) {
   assert(result && typeof result === 'object', `${label} did not return an object`);
   assert(result.success === true, `${label} failed: ${result.message || JSON.stringify(result)}`);
+}
+
+function simulateMarketplaceInstall({ packageRoot, packageVersion }) {
+  const marketplace = readJson(join(packageRoot, '.agents', 'plugins', 'marketplace.json'));
+  const entry = Array.isArray(marketplace.plugins)
+    ? marketplace.plugins.find((item) => item?.name === 'alembic-codex')
+    : null;
+  assert(entry, 'marketplace install smoke missing alembic-codex entry');
+  assert(entry.source?.source === 'local', 'marketplace install smoke requires local source');
+  assert(
+    entry.source?.path === './plugins/alembic-codex',
+    'marketplace install smoke requires ./plugins/alembic-codex source path'
+  );
+  assert(
+    entry.policy?.installation === 'AVAILABLE',
+    'marketplace install smoke requires AVAILABLE installation policy'
+  );
+  assert(
+    entry.policy?.authentication === 'ON_INSTALL',
+    'marketplace install smoke requires ON_INSTALL authentication policy'
+  );
+
+  const sourceRoot = resolve(packageRoot, entry.source.path);
+  const installedRoot = join(packageRoot, '.codex-install-smoke', entry.name);
+  cpSync(sourceRoot, installedRoot, { recursive: true });
+
+  const manifestPath = join(installedRoot, '.codex-plugin', 'plugin.json');
+  const manifest = readJson(manifestPath);
+  assert(manifest.name === 'alembic-codex', 'installed plugin manifest name mismatch');
+  assert(manifest.interface?.displayName === 'Alembic', 'installed plugin displayName mismatch');
+  assert(
+    manifest.interface?.category === entry.category,
+    'installed plugin category must match marketplace entry'
+  );
+
+  const mcpPath =
+    typeof manifest.mcpServers === 'string'
+      ? resolve(installedRoot, manifest.mcpServers)
+      : join(installedRoot, '.mcp.json');
+  const mcp = readJson(mcpPath);
+  const args = Array.isArray(mcp.mcpServers?.alembic?.args) ? mcp.mcpServers.alembic.args : [];
+  const packageIndex = args.indexOf('--package');
+  assert(
+    args[packageIndex + 1] === `alembic-ai@${packageVersion}`,
+    'installed plugin MCP runtime pin mismatch'
+  );
+  assert(args.includes('alembic-codex-mcp'), 'installed plugin MCP binary missing');
+
+  for (const asset of collectManifestAssets(manifest.interface || {})) {
+    assert(existsSync(resolve(installedRoot, asset)), `installed plugin asset missing: ${asset}`);
+  }
+  for (const skill of [
+    'alembic',
+    'alembic-create',
+    'alembic-devdocs',
+    'alembic-guard',
+    'alembic-recipes',
+    'alembic-structure',
+  ]) {
+    assert(
+      existsSync(join(installedRoot, 'skills', skill, 'SKILL.md')),
+      `installed plugin skill missing: ${skill}`
+    );
+  }
+}
+
+function collectManifestAssets(iface) {
+  return [
+    iface.composerIcon,
+    iface.logo,
+    ...(Array.isArray(iface.screenshots) ? iface.screenshots : []),
+  ].filter((asset) => typeof asset === 'string' && asset.length > 0);
 }
 
 async function runStdioSmoke({ packageJson, packageRoot, projectRoot, alembicHome }) {
