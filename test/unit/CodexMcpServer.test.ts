@@ -424,7 +424,7 @@ describe('CodexMcpServer', () => {
     expect(pluginMcp.mcpServers.alembic.args).toContain(`alembic-ai@${packageJson.version}`);
     expect(pluginMcp.mcpServers.alembic.env.ALEMBIC_CODEX_ENABLE_ADMIN).toBe('0');
     expect(pluginJson.interface.defaultPrompt).toContain(
-      'Run Alembic Codex first-minute setup guidance for this project'
+      'Guide me through Alembic Codex first-minute setup for this project'
     );
     expect(pluginJson.interface.defaultPrompt).toContain(
       'Initialize Alembic Codex in Ghost mode for this project'
