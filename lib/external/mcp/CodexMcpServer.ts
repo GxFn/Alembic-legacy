@@ -599,7 +599,10 @@ function buildRuntimeDiagnostics(daemonStatus: DaemonStatus): Record<string, unk
     node: {
       ok: checks.node,
       required: '>=22',
+      recommended: '22 LTS',
       version: process.versions.node,
+      execPath: process.execPath,
+      modules: process.versions.modules,
     },
     commands: {
       npm,
@@ -760,7 +763,8 @@ function buildDiagnosticIssues(input: {
   const issues: DiagnosticIssue[] = [];
   if (!input.checks.node) {
     issues.push({
-      action: 'Install Node.js 22 or newer, then restart Codex.',
+      action:
+        'Install Node.js 22 LTS or newer, then restart Codex. Keep MCP and daemon on the same Node executable.',
       code: 'NODE_VERSION_UNSUPPORTED',
       message: `Alembic Codex requires Node.js >=22; current runtime is ${process.versions.node}.`,
       severity: 'error',

@@ -4,7 +4,7 @@ Alembic for Codex uses a lightweight MCP shim. The shim can report local status 
 
 ## Runtime
 
-- Node.js 22 or newer is required.
+- Node.js 22 or newer is required. Node 22 LTS is recommended for local development; keep the MCP shim and daemon on the same Node executable.
 - The marketplace MCP config pins the runtime package as `alembic-ai@0.0.9`.
 - The default MCP tier is `agent`; admin tools stay hidden unless both `ALEMBIC_MCP_TIER=admin` and `ALEMBIC_CODEX_ENABLE_ADMIN=1` are set.
 
