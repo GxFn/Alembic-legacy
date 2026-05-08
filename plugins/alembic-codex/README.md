@@ -59,6 +59,8 @@ npm run release:codex-plugin:daemon
 
 That optional variant also starts the daemon on a temporary localhost port and verifies interrupted job recovery. `prepublishOnly` runs `release:codex-plugin`.
 
+For the full release, testing, and promotion plan, see [RELEASE-PLAYBOOK.md](./RELEASE-PLAYBOOK.md).
+
 ## Local Marketplace
 
 This repository includes `.agents/plugins/marketplace.json` so local Codex builds can discover Alembic as an installable plugin entry. The entry points to `./plugins/alembic-codex`, marks installation as `AVAILABLE`, and uses `ON_INSTALL` authentication policy.

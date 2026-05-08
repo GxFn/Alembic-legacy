@@ -62,6 +62,8 @@ npm run release:codex-plugin
 npm run release:codex-plugin:daemon   # optional localhost daemon smoke
 ```
 
+For the detailed release, testing, and promotion plan, see `plugins/alembic-codex/RELEASE-PLAYBOOK.md`.
+
 ## Using in IDE
 
 `alembic setup` configures everything. Open your IDE's **Agent Mode** (Cursor Composer / VS Code Copilot Chat / Trae) and start chatting.

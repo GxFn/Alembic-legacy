@@ -242,6 +242,7 @@ function requiredPackageFiles(version) {
     'package/dashboard/dist/index.html',
     'package/plugins/alembic-codex/.codex-plugin/plugin.json',
     'package/plugins/alembic-codex/.mcp.json',
+    'package/plugins/alembic-codex/RELEASE-PLAYBOOK.md',
     'package/plugins/alembic-codex/README.md',
     'package/plugins/alembic-codex/assets/alembic-codex-status.svg',
     'package/plugins/alembic-codex/skills/alembic/SKILL.md',

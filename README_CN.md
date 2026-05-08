@@ -62,6 +62,8 @@ npm run release:codex-plugin
 npm run release:codex-plugin:daemon   # 可选，本地 localhost daemon smoke
 ```
 
+完整的发布、测试和推广方案见 `plugins/alembic-codex/RELEASE-PLAYBOOK.md`。
+
 ## 在 IDE 中使用
 
 `alembic setup` 配置好了一切。打开 IDE 的 **Agent Mode**（Cursor Composer / VS Code Copilot Chat / Trae），跟 Agent 对话就行。

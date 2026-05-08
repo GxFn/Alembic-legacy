@@ -12,6 +12,7 @@ const pluginJsonPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
 const mcpJsonPath = join(pluginRoot, '.mcp.json');
 const marketplacePath = join(root, '.agents', 'plugins', 'marketplace.json');
 const readmePath = join(pluginRoot, 'README.md');
+const releasePlaybookPath = join(pluginRoot, 'RELEASE-PLAYBOOK.md');
 const pluginJson = readJson(pluginJsonPath);
 const mcpJson = readJson(mcpJsonPath);
 const marketplaceJson = readJson(marketplacePath);
@@ -196,6 +197,19 @@ expect(
   readme.includes('Use it when you want Codex to:'),
   'plugin README must include product-facing use cases'
 );
+expect(existsSync(releasePlaybookPath), 'plugin release playbook must exist');
+const releasePlaybook = existsSync(releasePlaybookPath)
+  ? readFileSync(releasePlaybookPath, 'utf8')
+  : '';
+for (const phrase of [
+  'Version And Tag Flow',
+  'Test Matrix',
+  'Manual Codex App Pass',
+  'Promotion Plan',
+]) {
+  expect(releasePlaybook.includes(phrase), `release playbook must include ${phrase}`);
+}
+expect(readme.includes('RELEASE-PLAYBOOK.md'), 'plugin README must link to release playbook');
 expect(rootReadme.includes('## Codex Plugin'), 'root README must document Codex Plugin');
 expect(
   rootReadme.includes('npm run release:codex-plugin'),
@@ -205,6 +219,10 @@ expect(
   rootReadme.includes('alembic codex diagnostics --json'),
   'root README must document CLI Codex diagnostics'
 );
+expect(
+  rootReadme.includes('plugins/alembic-codex/RELEASE-PLAYBOOK.md'),
+  'root README must link to release playbook'
+);
 expect(rootReadmeCn.includes('## Codex 插件'), 'Chinese README must document Codex plugin');
 expect(
   rootReadmeCn.includes('npm run release:codex-plugin'),
@@ -213,6 +231,10 @@ expect(
 expect(
   rootReadmeCn.includes('alembic codex diagnostics --json'),
   'Chinese README must document CLI Codex diagnostics'
+);
+expect(
+  rootReadmeCn.includes('plugins/alembic-codex/RELEASE-PLAYBOOK.md'),
+  'Chinese README must link to release playbook'
 );
 
 if (errors.length > 0) {
