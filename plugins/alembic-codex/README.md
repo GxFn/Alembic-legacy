@@ -12,7 +12,7 @@ Use it when you want Codex to:
 ## Runtime
 
 - Node.js 22 or newer is required. Node 22 LTS is recommended for local development; keep the MCP shim and daemon on the same Node executable.
-- The marketplace MCP config pins the runtime package as `alembic-ai@0.0.9`.
+- The marketplace MCP config pins the runtime package as `alembic-ai@0.0.10`.
 - The default MCP tier is `agent`; admin tools stay hidden unless both `ALEMBIC_MCP_TIER=admin` and `ALEMBIC_CODEX_ENABLE_ADMIN=1` are set.
 
 ## First Checks
@@ -63,7 +63,7 @@ This repository includes `.agents/plugins/marketplace.json` so local Codex build
 The default plugin config launches through pinned `npx`. If the first run cannot reach the npm registry, install the same runtime version globally and run the MCP binary from `PATH`:
 
 ```bash
-npm install -g alembic-ai@0.0.9
+npm install -g alembic-ai@0.0.10
 alembic-codex-mcp
 ```
 
