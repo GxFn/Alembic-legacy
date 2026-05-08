@@ -32,10 +32,18 @@ If the Alembic daemon shuts down or restarts before an active job completes, the
 Before publishing, run:
 
 ```bash
-npm run verify:codex-plugin
+npm run release:codex-plugin
 ```
 
-The verifier checks the local Codex marketplace entry, pinned MCP runtime, lightweight `alembic-codex-mcp` binary, default agent tier, disabled admin gate, declared assets, shipped skills, default prompts, and README runtime fallback.
+The release check builds the runtime and Dashboard, verifies the local Codex marketplace entry, validates the pinned MCP runtime, checks the lightweight `alembic-codex-mcp` binary, default agent tier, disabled admin gate, declared assets, shipped skills, default prompts, README runtime fallback, package tarball contents, local install simulation, and real MCP stdio calls.
+
+For the full local daemon path, run:
+
+```bash
+npm run release:codex-plugin:daemon
+```
+
+That optional variant also starts the daemon on a temporary localhost port and verifies interrupted job recovery. `prepublishOnly` runs `release:codex-plugin`.
 
 ## Local Marketplace
 

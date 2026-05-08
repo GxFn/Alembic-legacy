@@ -247,6 +247,7 @@ function requiredPackageFiles(version) {
     'package/plugins/alembic-codex/skills/alembic/SKILL.md',
     'package/scripts/verify-codex-plugin.mjs',
     'package/scripts/smoke-codex-plugin.mjs',
+    'package/scripts/release-codex-plugin.mjs',
     'package/package.json',
   ].map((file) => file.replace('<version>', version));
 }

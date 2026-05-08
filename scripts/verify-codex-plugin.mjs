@@ -47,6 +47,24 @@ expect(
   Array.isArray(packageJson.files) && packageJson.files.includes('scripts/smoke-codex-plugin.mjs'),
   'package.json files[] must include scripts/smoke-codex-plugin.mjs'
 );
+expect(
+  Array.isArray(packageJson.files) &&
+    packageJson.files.includes('scripts/release-codex-plugin.mjs'),
+  'package.json files[] must include scripts/release-codex-plugin.mjs'
+);
+expect(
+  packageJson.scripts?.prepublishOnly === 'npm run release:codex-plugin',
+  'prepublishOnly must run release:codex-plugin'
+);
+expect(
+  packageJson.scripts?.['release:codex-plugin'] === 'node scripts/release-codex-plugin.mjs',
+  'package.json must expose release:codex-plugin'
+);
+expect(
+  packageJson.scripts?.['release:codex-plugin:daemon'] ===
+    'node scripts/release-codex-plugin.mjs --daemon',
+  'package.json must expose release:codex-plugin:daemon'
+);
 expect(pluginJson.name === 'alembic-codex', 'plugin.json name must be alembic-codex');
 expect(pluginJson.interface?.displayName === 'Alembic', 'plugin displayName must be Alembic');
 expect(server?.command === 'npx', '.mcp.json must launch through npx');
